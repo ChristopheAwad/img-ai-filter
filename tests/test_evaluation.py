@@ -243,15 +243,21 @@ def test_rejects_duplicate_normalized_path(tmp_path: Path) -> None:
 
 
 def test_rejects_malformed_csv_with_row_number_only(tmp_path: Path) -> None:
-    image = _write_images(tmp_path)[0]
+    import csv
+
+    _write_images(tmp_path)
     manifest = tmp_path / "manifest.csv"
     manifest.write_text(
-        HEADER + f'{_manifest_path(tmp_path, image)},"unterminated,ordinary,tuning\n',
+        f"path,label,split,source,license\nimg-0.png,ordinary,tuning,{'s' * 10_000},local-test\n",
         encoding="utf-8",
     )
-
-    with pytest.raises(ManifestError, match="line 2"):
-        load_manifest(tmp_path, manifest)
+    previous_limit = csv.field_size_limit()
+    csv.field_size_limit(1024)
+    try:
+        with pytest.raises(ManifestError, match="line 2"):
+            load_manifest(tmp_path, manifest)
+    finally:
+        csv.field_size_limit(previous_limit)
 
 
 def test_manifest_order_is_stable(tmp_path: Path) -> None:
@@ -308,6 +314,35 @@ def test_continues_after_typed_failure_and_records_it_without_classifying_it(
     assert len(failures) == 1
     assert failures[0].failure.message == "Cannot decode"
     assert failures[0].result is None
+
+
+def test_recall_counts_failed_images_and_fails_recall_target(tmp_path: Path) -> None:
+    images = _write_images(tmp_path, count=3)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, images[0])},screenshot,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, images[1])},screenshot,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, images[2])},screenshot,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            images[0]: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+            images[1]: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+            images[2]: AnalysisFailure(images[2], DECODE_FAILURE, "Cannot decode"),
+        }
+    )
+    run = evaluation.with_targets(
+        evaluation.evaluate_detector(detector, entries, "tuning"),
+        AcceptanceTargets(screenshot_recall=0.9),
+    )
+
+    assert run.recall_by_label["screenshot"] == pytest.approx(2 / 3)
+    assert run.all_metrics.recall == pytest.approx(2 / 3)
+    assert run.target_report.checks["screenshot_recall"] is False
+    assert not run.target_report.passed
 
 
 def test_rejects_unexpected_detector_exception_with_relative_path(tmp_path: Path) -> None:

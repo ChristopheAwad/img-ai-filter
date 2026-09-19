@@ -149,6 +149,8 @@ def load_manifest(root: Path, manifest_path: Path) -> Manifest:
 
     entries: list[ManifestEntry] = []
     seen: set[str] = set()
+    row_index = 1
+    reader = None
 
     try:
         with open(manifest_path, newline="", encoding="utf-8") as handle:
@@ -175,8 +177,9 @@ def load_manifest(root: Path, manifest_path: Path) -> Manifest:
                 else:
                     errors.append(error or "")
     except csv.Error as error:
+        line_num = getattr(getattr(reader, "reader", None), "line_num", None)
         raise ManifestError(
-            f"{manifest_path.name}: malformed CSV at line {row_index}: {error}"
+            f"{manifest_path.name}: malformed CSV at line {line_num or row_index}: {error}"
         ) from error
 
     if not entries:
@@ -375,11 +378,13 @@ def evaluate_detector(
 
     recall_by_label: dict[str, float | None] = {}
     for label in sorted(CANDIDATE_CATEGORIES):
-        expected_rows = [o for o in outcomes if o.expected_label == label and o.result is not None]
+        expected_rows = [o for o in outcomes if o.expected_label == label]
         if not expected_rows:
             recall_by_label[label] = None
             continue
-        correct = sum(1 for o in expected_rows if o.result.is_candidate)
+        correct = sum(
+            1 for o in expected_rows if o.result is not None and o.result.is_candidate
+        )
         recall_by_label[label] = correct / len(expected_rows)
 
     seconds = [o.seconds for o in outcomes]
@@ -447,6 +452,12 @@ def check_targets(run: DetectorEvaluation, targets: AcceptanceTargets) -> Target
     ]
     other_recall = sum(other) / len(other) if other else None
     above("other_candidate_recall", other_recall, targets.other_candidate_recall)
+
+    any_failure = any(o.failure is not None for o in run.outcomes) or bool(run.errors)
+    if any_failure:
+        checks["screenshot_recall"] = False
+        checks["other_candidate_recall"] = False
+
     below("median_seconds", run.median_seconds, targets.median_seconds)
     below("p95_seconds", run.p95_seconds, targets.p95_seconds)
     below("peak_memory_bytes", float(run.peak_memory_bytes), float(targets.peak_memory_bytes))

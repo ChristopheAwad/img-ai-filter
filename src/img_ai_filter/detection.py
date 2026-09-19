@@ -66,7 +66,12 @@ _MODEL_JARGON = (
     "activation",
 )
 
-_PATH_INSIDE_REASON = re.compile(r"\S+[/\\]\S+")
+_FS_INSIDE_REASON = re.compile(
+    r"(?:"
+    r"[A-Za-z]:[\\/][^\s]*"             # Windows drive path
+    r"|(?:[/\\][^\s/\\]+){2,}"          # two or more slash-joined segments
+    r")"
+)
 
 
 class Detector(Protocol):
@@ -103,9 +108,9 @@ class DetectionResult:
             raise DetectionError("Reason must not be empty")
 
         reason_lower = self.reason.strip().lower()
-        if any(word in reason_lower for word in _MODEL_JARGON):
+        if any(re.search(rf"\b{re.escape(word)}\b", reason_lower) for word in _MODEL_JARGON):
             raise DetectionError("Reason must not expose model jargon")
-        if _PATH_INSIDE_REASON.search(self.reason):
+        if _FS_INSIDE_REASON.search(self.reason):
             raise DetectionError("Reason must not expose filesystem details")
 
         if not self.is_candidate and self.category != ORDINARY:

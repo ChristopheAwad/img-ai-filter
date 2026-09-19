@@ -173,6 +173,47 @@ def test_reason_must_not_contain_filesystem_details() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Top/bottom text layout",
+        "left/right split layout",
+        "Text over image and/or caption",
+        "A lightweight layout with overlaid text",
+        "Found markers near the upper-left corner",
+    ],
+)
+def test_accepts_user_readable_reasons_with_common_phrasing(reason: str) -> None:
+    result = DetectionResult(
+        is_candidate=True,
+        category="screenshot",
+        reason=reason,
+        confidence=0.9,
+        default_checked=False,
+    )
+
+    assert result.reason == reason
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Stored at C:\\Windows\\desktop.ini",
+        "Located at docs/images/banner.png",
+        "Marker near \\secret\\cache\\session.db",
+    ],
+)
+def test_rejects_embedded_file_paths_in_reasons(reason: str) -> None:
+    with pytest.raises(DetectionError):
+        DetectionResult(
+            is_candidate=True,
+            category="screenshot",
+            reason=reason,
+            confidence=0.9,
+            default_checked=False,
+        )
+
+
 def test_module_must_not_import_pyside6() -> None:
     assert "PySide6" not in _module_source()
 
