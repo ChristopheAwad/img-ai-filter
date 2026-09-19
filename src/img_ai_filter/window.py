@@ -26,6 +26,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self._scan = scan
+        self._selected_folder: Path | None = None
 
         self.setWindowTitle("Image Filter")
         self.resize(820, 560)
@@ -92,11 +93,18 @@ class MainWindow(QMainWindow):
         self._apply_style()
 
     def _choose_folder(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "Select image folder")
+        starting_folder = str(self._selected_folder) if self._selected_folder else ""
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select image folder",
+            starting_folder,
+            QFileDialog.Option.ShowDirsOnly,
+        )
         if not selected:
             return
 
         folder = Path(selected)
+        self._selected_folder = folder
         self.folder_label.setText(str(folder))
         self.results_list.clear()
 
