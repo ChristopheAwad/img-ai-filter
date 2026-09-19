@@ -1,0 +1,1 @@
+"""Offline image review application."""
