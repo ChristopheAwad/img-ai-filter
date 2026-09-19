@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from img_ai_filter.scanner import ScanError, ScanResult, scan_images
+from img_ai_filter.scanner import ScanResult, scan_images
 
 
 class MainWindow(QMainWindow):
@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Review images, locally")
         title.setObjectName("title")
         description = QLabel(
-            "Choose a folder to find supported images. This scan does not change your files."
+            "Choose a folder, then start a scan when you are ready. Your files stay unchanged."
         )
         description.setObjectName("description")
         description.setWordWrap(True)
@@ -60,10 +60,16 @@ class MainWindow(QMainWindow):
         self.select_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.select_button.clicked.connect(self._choose_folder)
 
+        self.scan_button = QPushButton("Scan Folder")
+        self.scan_button.setObjectName("primaryButton")
+        self.scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.scan_button.setEnabled(False)
+
         folder_row = QHBoxLayout()
         folder_row.setSpacing(16)
         folder_row.addWidget(self.folder_label, 1)
         folder_row.addWidget(self.select_button)
+        folder_row.addWidget(self.scan_button)
 
         self.status_label = QLabel("Select a folder to begin.")
         self.status_label.setObjectName("status")
@@ -107,29 +113,8 @@ class MainWindow(QMainWindow):
         self._selected_folder = folder
         self.folder_label.setText(str(folder))
         self.results_list.clear()
-
-        try:
-            result = self._scan(folder)
-        except ScanError as error:
-            self.status_label.setText(str(error))
-            return
-
-        for image in result.images:
-            self.results_list.addItem(str(image))
-
-        count = len(result.images)
-        if count == 0:
-            message = "No supported images found."
-        elif count == 1:
-            message = "1 image found."
-        else:
-            message = f"{count} images found."
-
-        if result.skipped_directories:
-            skipped = len(result.skipped_directories)
-            noun = "folder" if skipped == 1 else "folders"
-            message = f"{message} {skipped} {noun} could not be read."
-        self.status_label.setText(message)
+        self.status_label.setText("Folder ready. Select Scan Folder to begin.")
+        self.scan_button.setEnabled(True)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -182,6 +167,11 @@ class MainWindow(QMainWindow):
             }
             QPushButton#primaryButton:focus {
                 border-color: #132238;
+            }
+            QPushButton#primaryButton:disabled {
+                background: #aab7c0;
+                border-color: #aab7c0;
+                color: #edf3f7;
             }
             QListWidget#results {
                 alternate-background-color: #f5f8fa;

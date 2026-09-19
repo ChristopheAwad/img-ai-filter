@@ -2,35 +2,113 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QAbstractButton, QFileDialog
 
-from img_ai_filter.scanner import ScanError, ScanResult
+from img_ai_filter.scanner import ScanResult
 from img_ai_filter.window import MainWindow
 
 
-def test_initial_window_has_folder_action_and_empty_state(qtbot) -> None:
-    window = MainWindow()
+def forbidden_scan(path: Path) -> ScanResult:
+    raise AssertionError(f"Folder selection must not scan {path}")
+
+
+def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
 
     assert window.select_button.text() == "Select Folder"
+    assert window.scan_button.text() == "Scan Folder"
+    assert not window.scan_button.isEnabled()
+    assert window.folder_label.text() == "No folder selected"
     assert window.status_label.text() == "Select a folder to begin."
     assert window.results_list.count() == 0
 
 
-def test_cancelling_folder_dialog_keeps_current_results(qtbot, monkeypatch) -> None:
-    window = MainWindow()
+def test_selecting_folder_only_prepares_it_for_scanning(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
-    window.folder_label.setText("Existing folder")
-    window.results_list.addItem("existing.png")
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path))
 
     window.select_button.click()
 
-    assert window.folder_label.text() == "Existing folder"
-    assert window.results_list.item(0).text() == "existing.png"
+    assert window.folder_label.text() == str(tmp_path)
+    assert window.status_label.text() == "Folder ready. Select Scan Folder to begin."
+    assert window.scan_button.isEnabled()
+    assert window.results_list.count() == 0
+
+
+def test_selecting_large_folder_does_not_inspect_or_display_files(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    for index in range(1_000):
+        (tmp_path / f"image-{index}.png").write_bytes(b"not decoded")
+
+    window = MainWindow(scan=forbidden_scan)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path))
+
+    window.select_button.click()
+
+    assert window.scan_button.isEnabled()
+    assert window.results_list.count() == 0
+
+
+def test_cancelling_first_picker_keeps_initial_state(qtbot, monkeypatch) -> None:
+    window = MainWindow(scan=forbidden_scan)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: "")
+
+    window.select_button.click()
+
+    assert window.folder_label.text() == "No folder selected"
+    assert window.status_label.text() == "Select a folder to begin."
+    assert not window.scan_button.isEnabled()
+    assert window.results_list.count() == 0
+
+
+def test_cancelling_later_picker_preserves_complete_state(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    selections = iter([str(tmp_path), ""])
+    window = MainWindow(scan=forbidden_scan)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: next(selections))
+
+    window.select_button.click()
+    window.results_list.addItem("existing candidate")
+    window.status_label.setText("Existing scan status")
+    window.select_button.click()
+
+    assert window.folder_label.text() == str(tmp_path)
+    assert window.status_label.text() == "Existing scan status"
+    assert window.scan_button.isEnabled()
+    assert window.results_list.item(0).text() == "existing candidate"
+
+
+def test_selecting_different_folder_clears_old_result_state(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    selections = iter([str(first), str(second)])
+    window = MainWindow(scan=forbidden_scan)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: next(selections))
+
+    window.select_button.click()
+    window.results_list.addItem("old candidate")
+    window.status_label.setText("Old scan status")
+    window.select_button.click()
+
+    assert window.folder_label.text() == str(second)
+    assert window.status_label.text() == "Folder ready. Select Scan Folder to begin."
+    assert window.scan_button.isEnabled()
+    assert window.results_list.count() == 0
 
 
 def test_folder_picker_requests_native_directory_only_mode(qtbot, monkeypatch) -> None:
     calls = []
-    window = MainWindow()
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
 
     def capture_dialog(*args):
@@ -47,10 +125,12 @@ def test_folder_picker_requests_native_directory_only_mode(qtbot, monkeypatch) -
     assert not options & QFileDialog.Option.DontUseNativeDialog
 
 
-def test_folder_picker_reopens_at_last_selected_folder(qtbot, monkeypatch, tmp_path: Path) -> None:
+def test_folder_picker_reopens_at_last_selected_folder(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
     starting_folders = []
     selections = iter([str(tmp_path), "", ""])
-    window = MainWindow(scan=lambda path: ScanResult(images=(), skipped_directories=()))
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
 
     def choose_folder(parent, caption, starting_folder, options):
@@ -65,109 +145,52 @@ def test_folder_picker_reopens_at_last_selected_folder(qtbot, monkeypatch, tmp_p
 
     assert starting_folders == ["", str(tmp_path), str(tmp_path)]
     assert window.folder_label.text() == str(tmp_path)
-    assert window.status_label.text() == "No supported images found."
+    assert window.status_label.text() == "Folder ready. Select Scan Folder to begin."
 
 
-def test_failed_scan_folder_is_remembered_by_picker(qtbot, monkeypatch, tmp_path: Path) -> None:
-    starting_folders = []
-    selections = iter([str(tmp_path), "", ""])
-
-    def fail_scan(path: Path) -> ScanResult:
-        raise ScanError("Cannot read selected folder: access denied")
-
-    window = MainWindow(scan=fail_scan)
-    qtbot.addWidget(window)
-
-    def choose_folder(parent, caption, starting_folder, options):
-        starting_folders.append(starting_folder)
-        return next(selections)
-
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose_folder)
-
-    window.select_button.click()
-    window.select_button.click()
-    window.select_button.click()
-
-    assert starting_folders == ["", str(tmp_path), str(tmp_path)]
-    assert window.folder_label.text() == str(tmp_path)
-    assert window.status_label.text() == "Cannot read selected folder: access denied"
-
-
-def test_filesystem_root_is_passed_to_scanner_unchanged(qtbot, monkeypatch, tmp_path: Path) -> None:
-    scanned_paths = []
+def test_boundary_path_is_preserved_without_scanning(qtbot, monkeypatch, tmp_path: Path) -> None:
     root = Path(tmp_path.anchor)
-    window = MainWindow(
-        scan=lambda path: scanned_paths.append(path) or ScanResult(images=(), skipped_directories=())
-    )
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(root))
 
     window.select_button.click()
 
-    assert scanned_paths == [root]
+    assert window.folder_label.text() == str(root)
+    assert window.scan_button.isEnabled()
 
 
-def test_valid_empty_folder_shows_completed_empty_scan(qtbot, monkeypatch, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_long_unicode_path_is_preserved_without_validation(qtbot, monkeypatch, tmp_path: Path) -> None:
+    selected = tmp_path / ("long folder " * 12) / "résumé"
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(selected))
 
     window.select_button.click()
 
-    assert window.folder_label.text() == str(tmp_path)
-    assert window.status_label.text() == "No supported images found."
-    assert window.results_list.count() == 0
+    assert window.folder_label.text() == str(selected)
+    assert window.scan_button.isEnabled()
 
 
-def test_supported_images_are_displayed(qtbot, monkeypatch, tmp_path: Path) -> None:
-    images = (tmp_path / "one.png", tmp_path / "nested" / "two.jpg")
-    window = MainWindow(scan=lambda path: ScanResult(images=images, skipped_directories=()))
+def test_folder_selection_does_not_change_source_file(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source.png"
+    original = b"source bytes"
+    source.write_bytes(original)
+    original_stat = source.stat()
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path))
 
     window.select_button.click()
 
-    assert window.status_label.text() == "2 images found."
-    assert [window.results_list.item(index).text() for index in range(2)] == [str(path) for path in images]
-
-
-def test_new_scan_replaces_old_results(qtbot, monkeypatch, tmp_path: Path) -> None:
-    first = tmp_path / "first.png"
-    second = tmp_path / "second.jpg"
-    results = iter(
-        [
-            ScanResult(images=(first,), skipped_directories=()),
-            ScanResult(images=(second,), skipped_directories=()),
-        ]
-    )
-    window = MainWindow(scan=lambda path: next(results))
-    qtbot.addWidget(window)
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path))
-
-    window.select_button.click()
-    window.select_button.click()
-
-    assert window.results_list.count() == 1
-    assert window.results_list.item(0).text() == str(second)
-
-
-def test_scan_failure_is_visible_and_controls_remain_available(qtbot, monkeypatch, tmp_path: Path) -> None:
-    def fail_scan(path: Path) -> ScanResult:
-        raise ScanError("Cannot read selected folder: access denied")
-
-    window = MainWindow(scan=fail_scan)
-    qtbot.addWidget(window)
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path))
-
-    window.select_button.click()
-
-    assert window.status_label.text() == "Cannot read selected folder: access denied"
-    assert window.select_button.isEnabled()
-    assert window.results_list.count() == 0
+    assert source.read_bytes() == original
+    assert source.stat().st_mtime_ns == original_stat.st_mtime_ns
 
 
 def test_window_has_no_move_delete_or_quarantine_action(qtbot) -> None:
-    window = MainWindow()
+    window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)
 
     button_text = " ".join(button.text().lower() for button in window.findChildren(QAbstractButton))

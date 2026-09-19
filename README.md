@@ -2,7 +2,7 @@
 
 Image Filter is a privacy-first desktop application for finding screenshots and memes in selected image folders. It works locally and does not change files during a scan.
 
-The current milestone finds supported images and lists their paths. Classification and quarantine actions are not implemented yet.
+The current milestone separates folder selection from scanning. Candidate detection and quarantine actions are not implemented yet.
 
 ## Requirements
 
@@ -39,7 +39,9 @@ python -m img_ai_filter
 
 Select a test folder with the **Select Folder** button. The application uses your operating system's folder picker, including its normal navigation and saved locations. If you open the picker again during the same session, it starts at the last folder you selected.
 
-The application searches that folder and its nested folders for PNG, JPEG, WebP, BMP, and TIFF files. It does not follow symbolic links.
+Selecting a folder does not search it or load any images. It displays the selected path and enables **Scan Folder**. Scan behavior will be added after the local candidate detector is selected.
+
+The application does not rename, move, delete, or edit source images during folder selection.
 
 ## Tests
 
