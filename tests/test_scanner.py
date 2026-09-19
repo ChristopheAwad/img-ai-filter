@@ -18,6 +18,17 @@ def touch_files(root: Path, names: list[str]) -> list[Path]:
     return paths
 
 
+def create_windows_junction(junction: Path, target: Path) -> None:
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Cannot create a Windows junction: {result.stderr.strip()}")
+
+
 def test_empty_folder_returns_empty_result(tmp_path: Path) -> None:
     result = scan_images(tmp_path)
 
@@ -122,16 +133,20 @@ def test_does_not_follow_windows_junction_outside_tree(tmp_path: Path) -> None:
     source.mkdir()
     touch_files(outside, ["private.png"])
     junction = source / "linked"
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Cannot create a Windows junction: {result.stderr.strip()}")
+    create_windows_junction(junction, outside)
 
     assert scan_images(source).images == ()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions are only available on Windows")
+def test_rejects_windows_junction_as_selected_root(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    junction = tmp_path / "selected"
+    create_windows_junction(junction, target)
+
+    with pytest.raises(ScanError, match="not a folder"):
+        scan_images(junction)
 
 
 def test_missing_path_is_rejected(tmp_path: Path) -> None:
