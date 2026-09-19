@@ -34,7 +34,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 
 ## Deferred Decisions
 
-- Select rules, OCR, CLIP, a small classifier, or a hybrid after local benchmarking.
+- Select rules, OCR, CLIP, a small classifier, or a hybrid after local benchmarking. As of 2026-09-19 the offline evaluation tooling and a geometry-only baseline exist, but no approach passes every acceptance target yet, so no detector is selected and F-001 stays in progress.
 - Decide the quarantine folder layout and restoration workflow.
 - Add deletion, duplicate detection, image-quality detection, GIF, and HEIC support.
 - Add thumbnails after candidate detection and the candidate-only workflow work correctly.

@@ -82,8 +82,10 @@ Success: A user explicitly starts a scan and reviews only explained trash candid
 
 This milestone supplies the detector required to complete F-001 and Milestone 2. The technical approach is not selected yet.
 
+Evaluation infrastructure landed 2026-09-19: a strict result contract, manifest validation, dependency-free metrics, evaluation orchestration, and offline JSON/Markdown reports (`detection.py`, `evaluation.py`, `eval_cli.py`). The geometry baseline is implemented and tested. OCR and ONNX candidates require the real labeled dataset before they can be compared.
+
 - Define representative screenshot, meme, uncertain, and ordinary-photo examples.
-- Agree on measurable accuracy, false-positive, performance, and package-size targets.
+- Agree on measurable accuracy, false-positive, performance, and package-size targets. Acceptance targets are codified in `AcceptanceTargets`.
 - Compare rules, metadata, OCR, ONNX models, or a hybrid approach.
 - Select the smallest fully local approach that meets the agreed targets.
 - Return a candidate decision, user-readable reason, and confidence for each analyzed image.

@@ -16,7 +16,7 @@ Run these commands from the project folder:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[test]'
+python -m pip install -e '.[test,eval]'
 ```
 
 ## Windows PowerShell Setup
@@ -26,7 +26,7 @@ Run these commands from the project folder:
 ```powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
-python -m pip install -e ".[test]"
+python -m pip install -e ".[test,eval]"
 ```
 
 ## Launch
@@ -50,3 +50,27 @@ Activate the virtual environment, then run:
 ```bash
 python -m pytest
 ```
+
+## Detector evaluation
+
+Image Filter chooses its local screenshot-and-meme detector through a separate,
+fully offline evaluation. The current application does not detect candidates
+yet; this evaluation tooling helps select the detector first.
+
+The evaluation compares candidate approaches on a labeled local dataset and
+produces a report. It never sends data anywhere. Install the optional
+evaluation dependencies and read `evaluation/README.md` before running:
+
+```bash
+python -m img_ai_filter.eval_cli \
+    --dataset evaluation/data \
+    --manifest evaluation/manifest.csv \
+    --split holdout \
+    --json evaluation/reports/compare.json \
+    --markdown evaluation/reports/compare.md
+```
+
+Real benchmark images and the real manifest stay outside Git. The included
+`evaluation/manifest.example.csv` shows the format only. Until the dataset
+covers the minimum categories in `feature.md`, every report is marked
+exploratory and no detector is selected.
