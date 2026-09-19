@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import statistics
 from typing import Sequence
 
@@ -130,7 +131,7 @@ def _is_unsafe_path(raw: str) -> bool:
         return True
     if raw.startswith("\\\\"):
         return True
-    return bool(__import__("re").match(_WINDOWS_DRIVE, raw))
+    return bool(re.match(_WINDOWS_DRIVE, raw))
 
 
 def _contains_parent_traversal(raw: str) -> bool:
@@ -368,7 +369,6 @@ def evaluate_detector(
             )
     tracemalloc.stop()
 
-    all_pred = [bool(o.result) if o.result else _is_candidate_label(o.expected_label) for o in outcomes]
     all_pred_clean = [o.result.is_candidate if o.result else False for o in outcomes]
     checked_pred = [o.result.default_checked if o.result else False for o in outcomes]
 

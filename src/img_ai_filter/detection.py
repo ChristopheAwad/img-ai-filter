@@ -70,6 +70,7 @@ _FS_INSIDE_REASON = re.compile(
     r"(?:"
     r"[A-Za-z]:[\\/][^\s]*"             # Windows drive path
     r"|(?:[/\\][^\s/\\]+){2,}"          # two or more slash-joined segments
+    r"|(?:^|\s)[/\\][^\s/\\]+"          # absolute token like /etc or \root
     r")"
 )
 

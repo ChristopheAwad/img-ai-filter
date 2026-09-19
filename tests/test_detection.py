@@ -201,6 +201,8 @@ def test_accepts_user_readable_reasons_with_common_phrasing(reason: str) -> None
         "Stored at C:\\Windows\\desktop.ini",
         "Located at docs/images/banner.png",
         "Marker near \\secret\\cache\\session.db",
+        "/tmp scratch space",
+        "\\root marker seen",
     ],
 )
 def test_rejects_embedded_file_paths_in_reasons(reason: str) -> None:

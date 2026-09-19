@@ -345,6 +345,44 @@ def test_recall_counts_failed_images_and_fails_recall_target(tmp_path: Path) -> 
     assert not run.target_report.passed
 
 
+def test_detector_exception_fails_recall_targets(tmp_path: Path) -> None:
+    okay, broken = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, okay)},screenshot,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, broken)},screenshot,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {okay: DetectionResult(True, "screenshot", "screen layout", 0.99, True)}
+    )
+
+    class RaisingDetector:
+        name = "boom"
+
+        @staticmethod
+        def analyze(path):
+            if path == broken:
+                raise RuntimeError("boom")
+            return detector.analyze(path)
+
+        @classmethod
+        def describe(cls) -> dict[str, str | int]:
+            return {"model_bytes": 0}
+
+    run = evaluation.with_targets(
+        evaluation.evaluate_detector(RaisingDetector(), entries, "tuning"),
+        AcceptanceTargets(screenshot_recall=0.0),
+    )
+
+    assert run.errors
+    assert run.recall_by_label["screenshot"] == 1.0
+    assert run.target_report.checks["screenshot_recall"] is False
+    assert not run.target_report.passed
+
+
 def test_rejects_unexpected_detector_exception_with_relative_path(tmp_path: Path) -> None:
     image = _write_images(tmp_path)[0]
     manifest = _manifest(tmp_path, [f"{_manifest_path(tmp_path, image)},screenshot,tuning,test-source,local-test\n"])
