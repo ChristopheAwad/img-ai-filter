@@ -48,6 +48,7 @@ def test_non_linux_platforms_are_not_changed(platform: str) -> None:
 def test_entry_point_configures_platform_theme_before_importing_qt(monkeypatch) -> None:
     real_import = builtins.__import__
     configured = False
+    seen = []
     monkeypatch.delitem(sys.modules, "img_ai_filter.__main__", raising=False)
 
     def mark_configured() -> None:
@@ -55,6 +56,7 @@ def test_entry_point_configures_platform_theme_before_importing_qt(monkeypatch) 
         configured = True
 
     def checked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        seen.append(name)
         if name == "PySide6.QtWidgets":
             assert configured
         return real_import(name, globals, locals, fromlist, level)
@@ -63,3 +65,5 @@ def test_entry_point_configures_platform_theme_before_importing_qt(monkeypatch) 
     monkeypatch.setattr(builtins, "__import__", checked_import)
 
     importlib.import_module("img_ai_filter.__main__")
+
+    assert "PySide6.QtWidgets" in seen

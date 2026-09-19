@@ -70,7 +70,7 @@ def test_folder_picker_reopens_at_last_selected_folder(qtbot, monkeypatch, tmp_p
 
 def test_failed_scan_folder_is_remembered_by_picker(qtbot, monkeypatch, tmp_path: Path) -> None:
     starting_folders = []
-    selections = iter([str(tmp_path), ""])
+    selections = iter([str(tmp_path), "", ""])
 
     def fail_scan(path: Path) -> ScanResult:
         raise ScanError("Cannot read selected folder: access denied")
@@ -86,8 +86,10 @@ def test_failed_scan_folder_is_remembered_by_picker(qtbot, monkeypatch, tmp_path
 
     window.select_button.click()
     window.select_button.click()
+    window.select_button.click()
 
-    assert starting_folders == ["", str(tmp_path)]
+    assert starting_folders == ["", str(tmp_path), str(tmp_path)]
+    assert window.folder_label.text() == str(tmp_path)
     assert window.status_label.text() == "Cannot read selected folder: access denied"
 
 
