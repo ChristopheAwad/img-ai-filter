@@ -64,6 +64,9 @@ def test_entry_point_configures_platform_theme_before_importing_qt(monkeypatch) 
     monkeypatch.setattr(platform_integration, "configure_native_file_dialogs", mark_configured)
     monkeypatch.setattr(builtins, "__import__", checked_import)
 
-    importlib.import_module("img_ai_filter.__main__")
+    try:
+        importlib.import_module("img_ai_filter.__main__")
+    finally:
+        sys.modules.pop("img_ai_filter.__main__", None)
 
     assert "PySide6.QtWidgets" in seen
