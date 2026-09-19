@@ -180,6 +180,7 @@ def test_reason_must_not_contain_filesystem_details() -> None:
         "left/right split layout",
         "Text over image and/or caption",
         "A lightweight layout with overlaid text",
+        "Ratio 16/9 or 4/3",
         "Found markers near the upper-left corner",
     ],
 )
