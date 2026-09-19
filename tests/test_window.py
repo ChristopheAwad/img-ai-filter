@@ -49,7 +49,7 @@ def test_folder_picker_requests_native_directory_only_mode(qtbot, monkeypatch) -
 
 def test_folder_picker_reopens_at_last_selected_folder(qtbot, monkeypatch, tmp_path: Path) -> None:
     starting_folders = []
-    selections = iter([str(tmp_path), ""])
+    selections = iter([str(tmp_path), "", ""])
     window = MainWindow(scan=lambda path: ScanResult(images=(), skipped_directories=()))
     qtbot.addWidget(window)
 
@@ -61,8 +61,9 @@ def test_folder_picker_reopens_at_last_selected_folder(qtbot, monkeypatch, tmp_p
 
     window.select_button.click()
     window.select_button.click()
+    window.select_button.click()
 
-    assert starting_folders == ["", str(tmp_path)]
+    assert starting_folders == ["", str(tmp_path), str(tmp_path)]
     assert window.folder_label.text() == str(tmp_path)
     assert window.status_label.text() == "No supported images found."
 

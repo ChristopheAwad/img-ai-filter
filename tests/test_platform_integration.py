@@ -1,3 +1,8 @@
+import builtins
+import importlib
+import os
+import sys
+
 import pytest
 
 from img_ai_filter.platform_integration import configure_native_file_dialogs
@@ -23,6 +28,14 @@ def test_linux_preserves_existing_platform_theme() -> None:
     assert environment["QT_QPA_PLATFORMTHEME"] == "gtk3"
 
 
+def test_linux_replaces_empty_platform_theme_with_desktop_portal() -> None:
+    environment = {"QT_QPA_PLATFORMTHEME": ""}
+
+    configure_native_file_dialogs("linux", environment)
+
+    assert environment["QT_QPA_PLATFORMTHEME"] == "xdgdesktopportal"
+
+
 @pytest.mark.parametrize("platform", ["win32", "darwin"])
 def test_non_linux_platforms_are_not_changed(platform: str) -> None:
     environment = {"UNRELATED": "kept"}
@@ -30,3 +43,18 @@ def test_non_linux_platforms_are_not_changed(platform: str) -> None:
     configure_native_file_dialogs(platform, environment)
 
     assert environment == {"UNRELATED": "kept"}
+
+
+def test_entry_point_configures_platform_theme_before_importing_qt(monkeypatch) -> None:
+    real_import = builtins.__import__
+    monkeypatch.delenv("QT_QPA_PLATFORMTHEME", raising=False)
+    monkeypatch.delitem(sys.modules, "img_ai_filter.__main__", raising=False)
+
+    def checked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "PySide6.QtWidgets":
+            assert os.environ["QT_QPA_PLATFORMTHEME"] == "xdgdesktopportal"
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", checked_import)
+
+    importlib.import_module("img_ai_filter.__main__")
