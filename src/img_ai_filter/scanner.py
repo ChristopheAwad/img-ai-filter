@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import stat
 from typing import TypeAlias
 
 
@@ -20,6 +21,16 @@ class ScanResult:
     skipped_directories: tuple[Path, ...]
 
 
+def _is_windows_reparse_point(path: Path) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        attributes = os.lstat(path).st_file_attributes
+    except OSError:
+        return True
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 def scan_images(folder: PathInput) -> ScanResult:
     """Find supported images below folder without following symbolic links."""
     if isinstance(folder, str) and not folder.strip():
@@ -28,7 +39,7 @@ def scan_images(folder: PathInput) -> ScanResult:
     root = Path(folder)
     if not root.exists():
         raise ScanError(f"Selected path does not exist: {root}")
-    if root.is_symlink() or not root.is_dir():
+    if root.is_symlink() or _is_windows_reparse_point(root) or not root.is_dir():
         raise ScanError(f"Selected path is not a folder: {root}")
 
     images: list[Path] = []
@@ -44,6 +55,8 @@ def scan_images(folder: PathInput) -> ScanResult:
                         if entry.is_symlink():
                             continue
                         path = Path(entry.path)
+                        if _is_windows_reparse_point(path):
+                            continue
                         if entry.is_dir(follow_symlinks=False):
                             pending.append(path)
                         elif entry.is_file(follow_symlinks=False) and path.suffix.casefold() in SUPPORTED_EXTENSIONS:

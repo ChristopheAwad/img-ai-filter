@@ -1,5 +1,8 @@
 import os
 from pathlib import Path
+import stat
+import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -102,6 +105,33 @@ def test_does_not_include_image_symlinks(tmp_path: Path) -> None:
         pytest.skip(f"Cannot create symbolic links: {error}")
 
     assert scan_images(tmp_path).images == (original,)
+
+
+def test_windows_reparse_attribute_is_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reparse_stat = SimpleNamespace(st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    monkeypatch.setattr(scanner.os, "name", "nt")
+    monkeypatch.setattr(scanner.os, "lstat", lambda path: reparse_stat)
+
+    assert scanner._is_windows_reparse_point(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions are only available on Windows")
+def test_does_not_follow_windows_junction_outside_tree(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    outside = tmp_path / "outside"
+    source.mkdir()
+    touch_files(outside, ["private.png"])
+    junction = source / "linked"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Cannot create a Windows junction: {result.stderr.strip()}")
+
+    assert scan_images(source).images == ()
 
 
 def test_missing_path_is_rejected(tmp_path: Path) -> None:
