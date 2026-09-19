@@ -2,6 +2,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QAbstractButton, QFileDialog
 
+from img_ai_filter import scanner as scanner_module
 from img_ai_filter.scanner import ScanResult
 from img_ai_filter.window import MainWindow
 
@@ -42,6 +43,11 @@ def test_selecting_large_folder_does_not_inspect_or_display_files(
 ) -> None:
     for index in range(1_000):
         (tmp_path / f"image-{index}.png").write_bytes(b"not decoded")
+
+    def forbidden_traversal(path):
+        raise AssertionError(f"Folder selection must not traverse {path}")
+
+    monkeypatch.setattr(scanner_module.os, "scandir", forbidden_traversal)
 
     window = MainWindow(scan=forbidden_scan)
     qtbot.addWidget(window)

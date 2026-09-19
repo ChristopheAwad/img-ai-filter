@@ -101,13 +101,15 @@ Use scanner test doubles that fail immediately if called. File-content and large
 ## Planned Files
 
 - `feature.md`
+- `project-brief.md`
+- `roadmap.md`
 - `src/img_ai_filter/window.py`
 - `tests/test_window.py`
 - `src/img_ai_filter/preview.py` (remove)
 - `tests/test_preview.py` (remove)
 - `README.md`
 
-Do not alter `project-brief.md` or `roadmap.md` in this change. They already define the complete candidate-scan workflow and detector dependency.
+The project brief and roadmap record the agreed complete candidate-scan workflow and detector dependency. This implementation stops at the selection-only boundary described above.
 
 ## Deferred At The Ready-To-Scan Boundary
 
