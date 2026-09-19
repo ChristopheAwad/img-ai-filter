@@ -1,10 +1,10 @@
 import builtins
 import importlib
-import os
 import sys
 
 import pytest
 
+from img_ai_filter import platform_integration
 from img_ai_filter.platform_integration import configure_native_file_dialogs
 
 
@@ -47,14 +47,19 @@ def test_non_linux_platforms_are_not_changed(platform: str) -> None:
 
 def test_entry_point_configures_platform_theme_before_importing_qt(monkeypatch) -> None:
     real_import = builtins.__import__
-    monkeypatch.delenv("QT_QPA_PLATFORMTHEME", raising=False)
+    configured = False
     monkeypatch.delitem(sys.modules, "img_ai_filter.__main__", raising=False)
+
+    def mark_configured() -> None:
+        nonlocal configured
+        configured = True
 
     def checked_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name == "PySide6.QtWidgets":
-            assert os.environ["QT_QPA_PLATFORMTHEME"] == "xdgdesktopportal"
+            assert configured
         return real_import(name, globals, locals, fromlist, level)
 
+    monkeypatch.setattr(platform_integration, "configure_native_file_dialogs", mark_configured)
     monkeypatch.setattr(builtins, "__import__", checked_import)
 
     importlib.import_module("img_ai_filter.__main__")
