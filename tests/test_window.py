@@ -28,6 +28,82 @@ def test_cancelling_folder_dialog_keeps_current_results(qtbot, monkeypatch) -> N
     assert window.results_list.item(0).text() == "existing.png"
 
 
+def test_folder_picker_requests_native_directory_only_mode(qtbot, monkeypatch) -> None:
+    calls = []
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    def capture_dialog(*args):
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", capture_dialog)
+
+    window.select_button.click()
+
+    assert calls[0][2] == ""
+    options = calls[0][3]
+    assert options & QFileDialog.Option.ShowDirsOnly
+    assert not options & QFileDialog.Option.DontUseNativeDialog
+
+
+def test_folder_picker_reopens_at_last_selected_folder(qtbot, monkeypatch, tmp_path: Path) -> None:
+    starting_folders = []
+    selections = iter([str(tmp_path), ""])
+    window = MainWindow(scan=lambda path: ScanResult(images=(), skipped_directories=()))
+    qtbot.addWidget(window)
+
+    def choose_folder(parent, caption, starting_folder, options):
+        starting_folders.append(starting_folder)
+        return next(selections)
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose_folder)
+
+    window.select_button.click()
+    window.select_button.click()
+
+    assert starting_folders == ["", str(tmp_path)]
+    assert window.folder_label.text() == str(tmp_path)
+    assert window.status_label.text() == "No supported images found."
+
+
+def test_failed_scan_folder_is_remembered_by_picker(qtbot, monkeypatch, tmp_path: Path) -> None:
+    starting_folders = []
+    selections = iter([str(tmp_path), ""])
+
+    def fail_scan(path: Path) -> ScanResult:
+        raise ScanError("Cannot read selected folder: access denied")
+
+    window = MainWindow(scan=fail_scan)
+    qtbot.addWidget(window)
+
+    def choose_folder(parent, caption, starting_folder, options):
+        starting_folders.append(starting_folder)
+        return next(selections)
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose_folder)
+
+    window.select_button.click()
+    window.select_button.click()
+
+    assert starting_folders == ["", str(tmp_path)]
+    assert window.status_label.text() == "Cannot read selected folder: access denied"
+
+
+def test_filesystem_root_is_passed_to_scanner_unchanged(qtbot, monkeypatch, tmp_path: Path) -> None:
+    scanned_paths = []
+    root = Path(tmp_path.anchor)
+    window = MainWindow(
+        scan=lambda path: scanned_paths.append(path) or ScanResult(images=(), skipped_directories=())
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(root))
+
+    window.select_button.click()
+
+    assert scanned_paths == [root]
+
+
 def test_valid_empty_folder_shows_completed_empty_scan(qtbot, monkeypatch, tmp_path: Path) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

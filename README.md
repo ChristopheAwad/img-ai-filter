@@ -37,7 +37,9 @@ Activate the virtual environment, then run:
 python -m img_ai_filter
 ```
 
-Select a test folder with the **Select Folder** button. The application searches that folder and its nested folders for PNG, JPEG, WebP, BMP, and TIFF files. It does not follow symbolic links.
+Select a test folder with the **Select Folder** button. The application uses your operating system's folder picker, including its normal navigation and saved locations. If you open the picker again during the same session, it starts at the last folder you selected.
+
+The application searches that folder and its nested folders for PNG, JPEG, WebP, BMP, and TIFF files. It does not follow symbolic links.
 
 ## Tests
 

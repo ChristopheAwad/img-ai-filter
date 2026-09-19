@@ -2,6 +2,10 @@
 
 import sys
 
+from img_ai_filter.platform_integration import configure_native_file_dialogs
+
+configure_native_file_dialogs()
+
 from PySide6.QtWidgets import QApplication
 
 from img_ai_filter.window import MainWindow

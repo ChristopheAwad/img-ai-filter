@@ -1,120 +1,116 @@
-# Feature Plan: Desktop Foundation and Folder Scan
+# Feature Plan: Native Folder Picker
 
 ## Goal
 
-Create the first working desktop application. The user can select a source folder, scan it recursively, and see all supported image paths. This feature only reads the file system. It does not classify, edit, move, or delete files.
+Replace Qt's limited fallback folder dialog with the operating system's native folder picker when one is available. On the KDE development system, the picker must provide normal file-explorer navigation such as back, forward, parent-folder access, and KDE Places. The application must remain compatible with GNOME, Cinnamon, Windows, and macOS native dialogs.
+
+The picker will reopen at the source folder most recently selected during the current application session. Scanning remains read-only and unchanged.
 
 ## Test Coverage First
 
-Write these tests before application code. Confirm that the relevant tests fail for the expected missing behavior before implementation starts.
+Write these tests before application code. Run them and confirm that the new tests fail for the expected missing behavior before implementation starts.
 
-### Scanner Unit Tests
+### Platform Integration Tests
 
-- Return an empty result for an existing empty folder.
-- Return an empty result when a folder contains only unsupported files.
-- Find PNG, JPG, JPEG, WebP, BMP, TIF, and TIFF files.
-- Match supported extensions without regard to letter case.
-- Find supported images at the selected folder boundary and in nested folders.
-- Exclude files whose names only end with a similar unsupported suffix.
-- Return each discovered path once.
-- Return results in a stable, predictable order.
-- Do not follow a symbolic link to a directory inside the selected tree.
-- Do not follow a symbolic link to a directory outside the selected tree.
-- Do not include symbolic links to image files.
-- Reject a path that does not exist.
-- Reject a path that points to a file instead of a folder.
-- Report a clear failure when the selected folder cannot be read.
-- Continue safely when one nested directory cannot be read, and report that skipped directory.
-- Handle an empty path value without scanning the current working directory by accident.
+- On Linux with no existing Qt platform theme, select the XDG desktop portal integration.
+- On Linux with an existing `QT_QPA_PLATFORMTHEME` value, preserve that value instead of overriding the user's desktop configuration.
+- On Windows, do not add a Linux platform-theme setting.
+- On macOS, do not add a Linux platform-theme setting.
+- Treat Linux platform identifiers such as `linux` and `linux2` as Linux.
+- Keep unrelated environment values unchanged.
 
-Where symbolic links or permission behavior cannot be created reliably on a platform, mark only that specific test as skipped with a clear reason.
+These tests must use an isolated environment mapping. They must not modify the test process's real desktop environment.
 
-### GUI Tests
+### Folder Picker GUI Tests
 
-- The initial window has a folder selection action and an empty-results message.
-- Cancelling the folder dialog does not start a scan or change the current results.
-- Selecting a valid empty folder shows a completed scan with zero images.
-- Selecting a folder with supported images displays their paths.
-- Starting another scan replaces old results instead of combining scans.
-- A scan failure shows a useful error and keeps the application responsive.
-- No move, delete, or quarantine action is present in this milestone.
+- The first picker opening has no application-selected starting folder, allowing the native dialog to choose its normal default.
+- After a successful folder selection, opening the picker again starts in that selected folder.
+- A selected empty folder becomes the remembered starting folder even when no images are found.
+- A selected folder remains remembered when scanning it fails.
+- Cancelling the first picker does not set a remembered folder or start a scan.
+- Cancelling a later picker keeps the prior folder, results, status, and remembered starting folder unchanged.
+- Selecting the filesystem root or another valid boundary folder passes that exact path to the scanner without path rewriting.
+- Folder selection continues to use directory-only mode and does not enable Qt's `DontUseNativeDialog` option.
+- Existing empty-result, supported-image, replacement-scan, unreadable-folder, and no-destructive-action tests continue to pass.
 
-Use temporary directories and generated empty files for scanner tests. Do not use personal folders, network access, or files outside the test temporary directory.
+Native dialog chrome and operating-system pinned locations cannot be reliably inspected by headless automated tests. Verify them with the manual GUI check below.
 
 ## Implementation Plan
 
-1. Add `pyproject.toml` with Python project metadata, PySide6 as the runtime dependency, pytest and pytest-qt as development test dependencies, and pytest configuration.
-2. Use a `src/img_ai_filter` package and a `tests` directory.
-3. Add a scanner module with a small typed result model containing discovered image paths and skipped-directory warnings.
-4. Validate the selected path before traversal.
-5. Traverse recursively without following symbolic links.
-6. Filter by the supported extensions defined in `project-brief.md`.
-7. Sort paths deterministically so tests and the GUI have stable results.
-8. Add a PySide6 main window with:
-   - a Select Folder button;
-   - the selected folder path;
-   - a result count;
-   - a simple list of discovered image paths;
-   - an empty state;
-   - an error message for failed scans.
-9. Add a package entry point so the app can be launched with `python -m img_ai_filter` from the configured development environment.
-10. Keep the scanner independent of PySide6 so later background scanning and classification can reuse it.
-11. Add a short README with environment setup, test, and launch commands after those commands have been verified.
+1. Add a small platform-integration function that accepts a platform name and environment mapping so its behavior can be tested without changing the real test environment.
+2. On Linux only, set `QT_QPA_PLATFORMTHEME` to `xdgdesktopportal` when the user has not already selected a Qt platform theme.
+3. Call the integration function before importing or initializing PySide6 in the application entry point.
+4. Keep `QFileDialog` in native mode. Do not set `DontUseNativeDialog` and do not build a custom file explorer.
+5. Explicitly request directory-only selection.
+6. Store the last accepted source folder in the main window for the lifetime of that window.
+7. Pass the stored folder back to the next native picker as its starting location.
+8. Keep cancellation non-destructive and preserve all current scan behavior.
+9. Update the README to describe the native picker and session-only starting-folder behavior.
+10. Run the complete automated test suite.
 
 ## Planned Files
 
-- `pyproject.toml`
-- `README.md`
-- `src/img_ai_filter/__init__.py`
+- `feature.md`
+- `src/img_ai_filter/platform_integration.py`
 - `src/img_ai_filter/__main__.py`
-- `src/img_ai_filter/scanner.py`
 - `src/img_ai_filter/window.py`
-- `tests/test_scanner.py`
+- `tests/test_platform_integration.py`
 - `tests/test_window.py`
+- `README.md`
 
-Exact file names can change if the tests or implementation show that a smaller structure is clearer.
+Exact file names can change if tests show that a smaller structure is clearer.
+
+## Platform Behavior
+
+- KDE Plasma: use the XDG portal, which should open KDE's native folder picker and KDE Places.
+- GNOME and Cinnamon: use the user's configured XDG portal backend or preserve an existing Qt platform-theme choice.
+- Windows: allow Qt to use the native Windows folder dialog.
+- macOS: allow Qt to use the native macOS folder dialog.
+- Linux without a working portal: Qt can fall back to its available dialog. Do not make folder selection fail only because native integration is unavailable.
+
+Pinned folders and navigation controls belong to the operating system's picker. The application will not maintain a second, conflicting set of bookmarks.
 
 ## Boundaries
 
 Included:
 
-- One selected source folder at a time.
-- Recursive, read-only discovery.
-- PNG, JPEG, WebP, BMP, and TIFF file extensions.
-- A basic desktop results list.
-- Linux, Windows, and macOS-compatible path handling.
+- Native folder-dialog integration.
+- KDE-first manual verification.
+- Cross-platform-safe configuration.
+- Remembering the last accepted folder for the current session.
+- Existing recursive scan behavior.
 
 Not included:
 
-- Reading image pixels or validating image contents.
-- Thumbnails.
-- AI classification, OCR, or ONNX Runtime.
-- Confidence values or automatic selection.
-- Quarantine folder selection.
-- Moving, renaming, restoring, or deleting files.
-- Persisted settings or review labels.
-- Installers or packaged releases.
+- A custom in-app file explorer.
+- Persisting the last folder after the application closes.
+- Adding, removing, or editing operating-system pinned locations.
+- Thumbnail results or changes to the scan-results list.
+- Multiple source folders.
+- Classification, quarantine, move, or delete actions.
 
 ## Acceptance Criteria
 
-- The verified setup command installs the project dependencies in a clean development environment.
 - All automated tests pass.
-- The desktop application launches with the documented command.
-- Selecting a folder shows all and only supported, non-symbolic-link image files beneath it.
-- Empty scans and failures have clear visible states.
-- Scanning does not modify any user file or folder.
-- No network service is used.
-- The user completes the required desktop GUI check and replies with `Approved` before any Git operation is proposed.
+- The KDE development system opens a native folder picker with normal navigation controls and KDE Places.
+- The native picker can open a pinned location and select a folder from it.
+- Reopening the picker starts at the last accepted source folder.
+- Cancelling the picker does not alter the active folder or scan results.
+- GNOME, Cinnamon, Windows, and macOS behavior is not blocked by KDE-specific code.
+- Selecting and scanning a folder does not modify user files.
+- The user completes the required KDE GUI check and replies with `Approved` before any Git operation is proposed.
 
 ## Manual GUI Check After Implementation
 
-After automated tests pass, provide the exact verified launch command and ask the user to check:
+After automated tests pass, launch the application on the KDE development desktop and use only safe test folders.
 
-1. The application opens and shows the empty state.
-2. Cancelling folder selection makes no change.
-3. Selecting a safe test folder shows supported images from it and its nested folders.
-4. Unsupported files do not appear.
-5. Selecting an empty folder shows zero results without an error.
-6. No source file changes during the test.
+1. Open the application and select **Select Folder**.
+2. Confirm that KDE's native folder picker opens.
+3. Confirm that back, forward, and parent-folder navigation are available.
+4. Open a pinned location from KDE Places and select a safe folder.
+5. Confirm that the application scans that folder and displays the result count.
+6. Open **Select Folder** again and confirm that it starts at the folder selected in step 4.
+7. Navigate elsewhere, cancel, and confirm that the prior source folder and results remain unchanged.
+8. Confirm that no source file changed during the test.
 
-Use only test data copied or created for this check. Do not use an important personal folder for the first manual test.
+Reply with `Approved` if every step passes. If a step fails, provide the step number, visible error text, and a screenshot when possible.
