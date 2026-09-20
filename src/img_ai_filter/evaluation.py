@@ -15,9 +15,11 @@ from typing import Sequence
 from img_ai_filter.detection import (
     AnalysisFailure,
     CANDIDATE_CATEGORIES,
+    DEFAULT_HIGH_CONFIDENCE_THRESHOLD,
     DetectionResult,
     Detector,
     ORDINARY,
+    UNCERTAIN,
 )
 from img_ai_filter.scanner import SUPPORTED_EXTENSIONS
 
@@ -123,6 +125,7 @@ class DetectorEvaluation:
     p95_seconds: float | None
     peak_memory_bytes: int
     model_bytes: int
+    uncertain_routing_rate: float | None = None
     target_report: TargetReport | None = None
 
 
@@ -265,7 +268,7 @@ def _parse_row(
 
 
 def _is_candidate_label(label: str) -> bool:
-    return label != ORDINARY
+    return label not in (ORDINARY, UNCERTAIN)
 
 
 def binary_metrics(expected: Sequence[bool], predicted: Sequence[bool]) -> ClassificationMetrics:
@@ -369,16 +372,17 @@ def evaluate_detector(
             )
     tracemalloc.stop()
 
-    all_pred_clean = [o.result.is_candidate if o.result else False for o in outcomes]
-    checked_pred = [o.result.default_checked if o.result else False for o in outcomes]
+    scored = [o for o in outcomes if o.expected_label != UNCERTAIN]
+    all_pred_clean = [o.result.is_candidate if o.result else False for o in scored]
+    checked_pred = [o.result.default_checked if o.result else False for o in scored]
 
-    all_expected = [_is_candidate_label(o.expected_label) for o in outcomes]
+    all_expected = [_is_candidate_label(o.expected_label) for o in scored]
     all_metrics = binary_metrics(all_expected, all_pred_clean)
     checked_metrics = binary_metrics(all_expected, checked_pred)
 
     recall_by_label: dict[str, float | None] = {}
-    for label in sorted(CANDIDATE_CATEGORIES):
-        expected_rows = [o for o in outcomes if o.expected_label == label]
+    for label in sorted(CANDIDATE_CATEGORIES - {UNCERTAIN}):
+        expected_rows = [o for o in scored if o.expected_label == label]
         if not expected_rows:
             recall_by_label[label] = None
             continue
@@ -388,6 +392,18 @@ def evaluate_detector(
         recall_by_label[label] = correct / len(expected_rows)
 
     seconds = [o.seconds for o in outcomes]
+    threshold = (
+        targets.high_confidence_threshold
+        if targets is not None
+        else DEFAULT_HIGH_CONFIDENCE_THRESHOLD
+    )
+    valid_uncertain = [
+        o for o in outcomes if o.expected_label == UNCERTAIN and o.result is not None
+    ]
+    routed = sum(1 for o in valid_uncertain if o.result.confidence < threshold)
+    uncertain_routing_rate = (
+        routed / len(valid_uncertain) if valid_uncertain else None
+    )
     try:
         model_bytes = int(detector.describe().get("model_bytes", 0))
     except Exception:  # noqa: BLE001 - description is advisory
@@ -405,6 +421,7 @@ def evaluate_detector(
         p95_seconds=percentile_95(seconds),
         peak_memory_bytes=peak,
         model_bytes=model_bytes,
+        uncertain_routing_rate=uncertain_routing_rate,
     )
     if targets is not None:
         evaluation_result = with_targets(evaluation_result, targets)
@@ -426,6 +443,7 @@ def with_targets(
         p95_seconds=evaluation_result.p95_seconds,
         peak_memory_bytes=evaluation_result.peak_memory_bytes,
         model_bytes=evaluation_result.model_bytes,
+        uncertain_routing_rate=evaluation_result.uncertain_routing_rate,
         target_report=check_targets(evaluation_result, targets),
     )
 
@@ -453,7 +471,9 @@ def check_targets(run: DetectorEvaluation, targets: AcceptanceTargets) -> Target
     other_recall = sum(other) / len(other) if other else None
     above("other_candidate_recall", other_recall, targets.other_candidate_recall)
 
-    any_failure = any(o.failure is not None for o in run.outcomes) or bool(run.errors)
+    any_failure = any(
+        o.failure is not None and o.expected_label != UNCERTAIN for o in run.outcomes
+    ) or bool(run.errors)
     if any_failure:
         checks["screenshot_recall"] = False
         checks["other_candidate_recall"] = False
@@ -510,6 +530,7 @@ def _runner_dict(run: DetectorEvaluation) -> dict[str, object]:
         "p95_seconds": run.p95_seconds,
         "peak_memory_bytes": run.peak_memory_bytes,
         "model_bytes": run.model_bytes,
+        "uncertain_routing_rate": run.uncertain_routing_rate,
         "targets": (dict(run.target_report.checks) if run.target_report else None),
         "targets_passed": bool(run.target_report and run.target_report.passed),
         "targets_missed": list(run.target_report.missed) if run.target_report else [],
@@ -602,6 +623,14 @@ def render_markdown(
         lines.append(f"| 95th-percentile seconds | {run.p95_seconds} |")
         lines.append(f"| Peak memory bytes | {run.peak_memory_bytes} |")
         lines.append(f"| Packaged model bytes | {run.model_bytes} |")
+        routing_rate = (
+            f"{run.uncertain_routing_rate:.0%}"
+            if run.uncertain_routing_rate is not None
+            else "n/a"
+        )
+        lines.append(
+            f"| uncertain routing rate (below threshold) | {routing_rate} |"
+        )
         if run.target_report:
             lines.append("")
             lines.append("| Target | Passed |")

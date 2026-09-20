@@ -667,3 +667,241 @@ def test_report_is_markdown_table_of_targets_and_metrics(tmp_path: Path) -> None
     assert "screenshot" in markdown
     assert "Median" in markdown
     assert "precision" in markdown.lower()
+
+
+def test_uncertain_rows_are_not_candidate_positive_in_all_metrics(
+    tmp_path: Path,
+) -> None:
+    shot, unclear = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, shot)},screenshot,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, unclear)},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            shot: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+            unclear: DetectionResult(False, "ordinary", "fine", 0.95, False),
+        }
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.all_metrics.true_positives == 1
+    assert run.all_metrics.true_negatives == 0
+    assert run.all_metrics.false_negatives == 0
+    assert run.all_metrics.recall == 1.0
+
+
+def test_uncertain_rows_do_not_inflate_false_positives(tmp_path: Path) -> None:
+    ordinary, unclear = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, ordinary)},ordinary,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, unclear)},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            ordinary: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+            unclear: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+        }
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.all_metrics.true_positives == 0
+    assert run.all_metrics.false_positives == 1
+    assert run.all_metrics.precision == 0.0
+
+
+def test_recall_by_label_excludes_uncertain(tmp_path: Path) -> None:
+    shot, unclear = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, shot)},screenshot,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, unclear)},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            shot: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+            unclear: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+        }
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.recall_by_label["screenshot"] == 1.0
+    assert "uncertain" not in run.recall_by_label
+    assert run.recall_by_label["comic"] is None
+
+
+def test_uncertain_routing_rate_is_none_when_no_uncertain_rows(
+    tmp_path: Path,
+) -> None:
+    image = _write_images(tmp_path, count=1)[0]
+    manifest = _manifest(
+        tmp_path,
+        [f"{_manifest_path(tmp_path, image)},ordinary,tuning,test-source,local-test\n"],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {image: DetectionResult(False, "ordinary", "fine", 0.5, False)}
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.uncertain_routing_rate is None
+
+
+def test_uncertain_routing_rate_is_zero_when_all_above_threshold(
+    tmp_path: Path,
+) -> None:
+    images = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, images[0])},uncertain,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, images[1])},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            images[0]: DetectionResult(False, "ordinary", "fine", 0.95, False),
+            images[1]: DetectionResult(False, "ordinary", "fine", 0.98, False),
+        }
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.uncertain_routing_rate == 0.0
+
+
+def test_uncertain_routing_rate_uses_strictly_below_threshold(
+    tmp_path: Path,
+) -> None:
+    images = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, images[0])},uncertain,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, images[1])},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            images[0]: DetectionResult(False, "ordinary", "fine", 0.5, False),
+            images[1]: DetectionResult(False, "ordinary", "fine", 0.49, False),
+        }
+    )
+    targets = AcceptanceTargets(high_confidence_threshold=0.5)
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning", targets)
+
+    assert run.uncertain_routing_rate == 0.5
+
+
+def test_uncertain_routing_rate_is_hundred_percent_below_default_threshold(
+    tmp_path: Path,
+) -> None:
+    images = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, images[0])},uncertain,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, images[1])},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            images[0]: DetectionResult(False, "ordinary", "fine", 0.3, False),
+            images[1]: DetectionResult(False, "ordinary", "fine", 0.6, False),
+        }
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.uncertain_routing_rate == 1.0
+
+
+def test_uncertain_routing_rate_denominator_uses_only_valid_results(
+    tmp_path: Path,
+) -> None:
+    routed, failed = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, routed)},uncertain,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, failed)},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            routed: DetectionResult(False, "ordinary", "fine", 0.3, False),
+            failed: AnalysisFailure(failed, DECODE_FAILURE, "Cannot decode"),
+        }
+    )
+
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+
+    assert run.uncertain_routing_rate == 1.0
+
+
+def test_uncertain_analysis_failure_does_not_fail_candidate_recall_targets(
+    tmp_path: Path,
+) -> None:
+    shot, unclear = _write_images(tmp_path, count=2)
+    manifest = _manifest(
+        tmp_path,
+        [
+            f"{_manifest_path(tmp_path, shot)},screenshot,tuning,test-source,local-test\n",
+            f"{_manifest_path(tmp_path, unclear)},uncertain,tuning,test-source,local-test\n",
+        ],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {
+            shot: DetectionResult(True, "screenshot", "screen layout", 0.99, True),
+            unclear: AnalysisFailure(unclear, DECODE_FAILURE, "Cannot decode"),
+        }
+    )
+
+    run = evaluation.with_targets(
+        evaluation.evaluate_detector(detector, entries, "tuning"),
+        AcceptanceTargets(screenshot_recall=0.9),
+    )
+
+    assert run.target_report.checks["screenshot_recall"] is True
+
+
+def test_reports_include_uncertain_routing_rate(tmp_path: Path) -> None:
+    image = _write_images(tmp_path, count=1)[0]
+    manifest = _manifest(
+        tmp_path,
+        [f"{_manifest_path(tmp_path, image)},uncertain,tuning,test-source,local-test\n"],
+    )
+    entries = load_manifest(tmp_path, manifest)
+    detector = FakeDetector(
+        {image: DetectionResult(False, "ordinary", "fine", 0.5, False)}
+    )
+    run = evaluation.evaluate_detector(detector, entries, "tuning")
+    targets = AcceptanceTargets()
+
+    markdown = evaluation.render_markdown({"fake": run}, targets, split="tuning")
+    payload = json.loads(evaluation.render_json({"fake": run}, targets, split="tuning"))
+
+    assert "uncertain routing rate" in markdown
+    assert "100%" in markdown
+    assert payload["detectors"]["fake"]["uncertain_routing_rate"] == 1.0
