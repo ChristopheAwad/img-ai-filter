@@ -5,10 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "img-ai-filter"
 version = "0.1.0"
-description = "Offline desktop review tool for screenshots and memes"
+description = "Privacy-conscious desktop review tool for screenshots and memes"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.8",
+    "keyring>=25.7.0,<26",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
@@ -16,9 +18,7 @@ test = [
     "pytest>=8.3",
     "pytest-qt>=4.4",
 ]
-eval = [
-    "pillow>=10.0",
-]
+eval = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/img_ai_filter"]

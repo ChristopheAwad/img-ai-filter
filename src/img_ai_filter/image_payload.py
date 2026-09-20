@@ -1,0 +1,141 @@
+"""Bounded, read-only image preparation for vision requests."""
+
+from __future__ import annotations
+
+import base64
+from dataclasses import dataclass
+from io import BytesIO
+import os
+from pathlib import Path
+import warnings
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+from .scanner import SUPPORTED_EXTENSIONS
+
+
+MAX_INPUT_BYTES = 32 * 1024 * 1024
+MAX_ENCODED_PNG_BYTES = 8 * 1024 * 1024
+SAFE_MAX_PIXELS = 100_000_000
+MAX_DIMENSION = 1024
+
+_FORMATS_BY_EXTENSION = {
+    ".png": "PNG",
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".webp": "WEBP",
+    ".bmp": "BMP",
+    ".tif": "TIFF",
+    ".tiff": "TIFF",
+}
+
+
+class ImagePayloadError(ValueError):
+    """Raised when an image cannot safely be prepared for a request."""
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedImage:
+    data_url: str
+    png_bytes: int
+    width: int
+    height: int
+
+
+def _read_bounded(path: Path) -> bytes:
+    try:
+        if path.is_symlink():
+            raise ImagePayloadError("Symbolic links are not supported")
+        if not path.is_file():
+            raise ImagePayloadError("The selected image is not a file")
+        size = path.stat().st_size
+        if size > MAX_INPUT_BYTES:
+            raise ImagePayloadError("The image file is too large")
+        with path.open("rb") as source:
+            data = source.read(MAX_INPUT_BYTES + 1)
+    except ImagePayloadError:
+        raise
+    except (OSError, ValueError, TypeError):
+        raise ImagePayloadError("The selected image is not a readable file") from None
+
+    if len(data) > MAX_INPUT_BYTES:
+        raise ImagePayloadError("The image file is too large")
+    return data
+
+
+def _validate_dimensions(image: Image.Image) -> None:
+    width, height = image.size
+    if width < 1 or height < 1 or width * height > SAFE_MAX_PIXELS:
+        raise ImagePayloadError("The image dimensions are not supported")
+
+
+def _has_transparency(image: Image.Image) -> bool:
+    return "A" in image.getbands() or "transparency" in image.info
+
+
+def prepare_image(path: str | os.PathLike[str]) -> PreparedImage:
+    """Decode and normalize one scanner-supported image entirely in memory."""
+    try:
+        source_path = Path(path)
+        if source_path.is_symlink():
+            raise ImagePayloadError("Symbolic links are not supported")
+        if not source_path.is_file():
+            raise ImagePayloadError("The selected image is not a file")
+    except ImagePayloadError:
+        raise
+    except (TypeError, ValueError):
+        raise ImagePayloadError("The selected image is not a file") from None
+    except OSError:
+        raise ImagePayloadError("The selected image is not a readable file") from None
+
+    suffix = source_path.suffix.casefold()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise ImagePayloadError("The image extension is not supported")
+
+    source_bytes = _read_bounded(source_path)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(source_bytes)) as opened:
+                if opened.format != _FORMATS_BY_EXTENSION[suffix]:
+                    raise ImagePayloadError("The image format does not match its extension")
+                _validate_dimensions(opened)
+                opened.load()
+                transformed = ImageOps.exif_transpose(opened)
+                _validate_dimensions(transformed)
+                normalized = transformed.convert(
+                    "RGBA" if _has_transparency(transformed) else "RGB"
+                )
+    except ImagePayloadError:
+        raise
+    except Image.DecompressionBombError:
+        raise ImagePayloadError("The image dimensions are not supported") from None
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise ImagePayloadError("The image could not be decoded") from None
+
+    width, height = normalized.size
+    if max(width, height) > MAX_DIMENSION:
+        scale = MAX_DIMENSION / max(width, height)
+        resized_size = (
+            max(1, round(width * scale)),
+            max(1, round(height * scale)),
+        )
+        normalized = normalized.resize(resized_size, Image.Resampling.LANCZOS)
+
+    output = BytesIO()
+    try:
+        normalized.save(output, format="PNG")
+    except (OSError, ValueError):
+        raise ImagePayloadError("The image could not be encoded for the request") from None
+    png = output.getvalue()
+    if len(png) > MAX_ENCODED_PNG_BYTES:
+        raise ImagePayloadError("The image is too large for the request")
+
+    width, height = normalized.size
+    encoded = base64.b64encode(png).decode("ascii")
+    return PreparedImage(
+        data_url="data:image/png;base64," + encoded,
+        png_bytes=len(png),
+        width=width,
+        height=height,
+    )

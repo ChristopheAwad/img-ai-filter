@@ -1,8 +1,13 @@
 # Detector evaluation
 
-This folder holds the local, offline evaluation tooling that selects the
-candidate detector for the app. It never sends data anywhere: every image,
-manifest, report, and model stays on this computer.
+This folder holds optional evaluation tooling for detector quality. The current
+MVP uses a user-managed KoboldCpp vision server; the existing geometry baseline
+and dataset tools remain fully offline.
+
+Any future server evaluation may send images only to an explicitly configured
+user-managed server on loopback or the private local network. It must use the
+same consent, destination validation, and redaction rules as the desktop app.
+Public Internet endpoints are not allowed.
 
 ## What is committed
 
@@ -19,6 +24,7 @@ Set in `.gitignore` and kept strictly local:
 - `evaluation/reports/` — generated report files.
 - `evaluation-report.md` — a generated comparison report.
 - `sample-img/` — unlicensed sample images used only for smoke checks.
+- Local endpoint settings, API keys, and cascade connection diagnostics.
 
 ## Manifest format
 
@@ -48,13 +54,19 @@ source .venv/bin/activate
 python -m pip install -e '.[test,eval]'
 ```
 
-The `eval` extra currently adds Pillow only. No OCR or model dependency has been
-accepted yet; candidates are listed in the report.
+Pillow is a normal runtime dependency because the desktop scan prepares request
+images in memory. The `eval` extra is retained for command compatibility but is
+currently empty. Main dependencies also include the approved `keyring`
+credential-store adapter. No ONNX runtime or packaged production model is part
+of the current MVP.
 
 ## Run the evaluation
 
 ```bash
 python -m pytest
+python -m img_ai_filter.dataset_cli \
+    evaluation/data \
+    evaluation/manifest.csv
 python -m img_ai_filter.eval_cli \
     --dataset evaluation/data \
     --manifest evaluation/manifest.csv \
@@ -63,12 +75,21 @@ python -m img_ai_filter.eval_cli \
     --markdown evaluation/reports/compare.md
 ```
 
+The dataset command returns zero only when all images decode, all labels and
+splits meet the required counts, and duplicate or cross-split copies are not
+found. An incomplete or invalid dataset remains exploratory.
+
 Reports contain relative paths, labels, decisions, reasons, numeric metrics,
 failures, dependency and machine facts, and aggregated timings. They never
 contain image bytes or recognized OCR text.
 
 ## Current status
 
-The geometry baseline is implemented and tested. The real dataset must reach
-the minimum category coverage from `feature.md` before any production decision.
-Until then, a report is explicitly exploratory and no detector is selected.
+The geometry baseline and dataset validator are implemented and tested. The MVP
+uses a user-managed OpenAI-compatible KoboldCpp vision server for every image.
+No model is trained or packaged by this project.
+
+A real dataset must reach the minimum category coverage before making accuracy
+claims or enabling checked-by-default results. Until then, reports and the
+server-only MVP are experimental. Testing one vision model does not validate a
+different model selected by a user.

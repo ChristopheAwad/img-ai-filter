@@ -8,10 +8,10 @@ This roadmap divides the MVP into small, testable milestones. Each shipped miles
 
 - **Status:** in progress
 - **Tier:** Tier 1, core product workflow
-- **Effort:** Medium for workflow and interface changes; candidate-detection effort remains undecided
+- **Effort:** Medium after the KoboldCpp detector is available
 - **Planning files:** `project-brief.md`, `roadmap.md`, `feature.md`
-- **Likely implementation files:** main window, scan/detection boundary, tests, and README; exact files follow the technical decision
-- **Depends on:** shipped desktop folder-scanning foundation and a separate candidate-detection decision
+- **Likely implementation files:** main window, background scan worker, scan/detection boundary, tests, and README
+- **Depends on:** shipped desktop folder-scanning foundation and F-003
 - **Blocks:** quarantine workflow, because only reviewed candidates can be moved safely
 
 Dependency graph:
@@ -23,7 +23,7 @@ Milestone 1 shipped
 F-001 workflow contract and controls
         |
         v
-Milestone 3 detector decision and implementation
+F-003 KoboldCpp detector
         |
         v
 F-001 candidate-only results shipped
@@ -36,11 +36,110 @@ Implementation order:
 
 1. Agree on the user-visible scan states and candidate-result contract.
 2. Remove the rejected thumbnail-first prototype before new implementation.
-3. Decide how screenshots, memes, and uncertain candidates will be detected locally.
-4. Write failing workflow and detector-contract tests.
-5. Add explicit folder selection and scan controls.
-6. Integrate the selected detector and show candidate-only results.
+3. Complete F-003 and freeze its detector contract.
+4. Write failing background-worker, workflow, and result-row tests.
+5. Connect the existing scan control without changing folder-selection behavior.
+6. Show candidate-only results, review check states, and skipped-analysis counts.
 7. Complete automated and desktop GUI verification.
+
+### F-002: Pre-trained Detector With LAN Vision Fallback
+
+- **Status:** scrapped 2026-09-19 — replaced by F-003 after the user chose a KoboldCpp-only MVP to avoid packaged-model selection and unblock private manual testing
+- **Tier:** Tier 1, required detection architecture
+- **Effort:** Large because it includes dataset work, model evaluation, secure settings, bounded LAN communication, and cross-platform dependencies
+- **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`, `evaluation/README.md`
+- **Likely implementation files:** detector and evaluation modules, ONNX adapter and model metadata, endpoint configuration, OpenAI-compatible client, cascade orchestration, credential storage, background worker, main window, tests, and packaging configuration
+- **Depends on:** shipped evaluation foundation, a representative labeled dataset, a redistributable pre-trained ONNX model, and a supported operating-system credential-store library
+- **Blocks:** none; F-003 replaced this dependency
+
+Postmortem: the packaged ONNX plus LAN fallback design required a 335-image licensed benchmark, model redistribution research, ONNX packaging, preprocessing, integrity checks, threshold tuning, and a cascade before the GUI could perform a useful scan. The user has no benchmark images suitable for the project and chose a user-managed KoboldCpp vision server instead. Completed endpoint validation, settings, secure credentials, strict result contracts, and evaluation tooling are retained. No ONNX runtime or production model was added.
+
+The scrapped design would have classified every image first with a packaged
+pre-trained ONNX model, then sent only below-threshold results to a LAN vision
+server after consent. This description is retained as historical context and is
+not the current MVP architecture.
+
+Dependency graph:
+
+```text
+Evaluation foundation shipped
+        |
+        v
+Representative labeled dataset
+        |
+        v
+ONNX candidate research and holdout selection
+        |
+        v
+Strict LAN vision client and secure settings
+        |
+        v
+Classifier-first cascade evaluation
+        |
+        v
+F-002 detector cascade shipped
+        |
+        v
+F-001 candidate scan workflow completed
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Build and validate the labeled tuning and holdout dataset.
+3. Research redistributable ONNX classifiers and cross-platform credential storage.
+4. Write failing configuration, credential, model-integrity, classifier, vision-client, cascade, privacy, worker, and GUI tests in the order defined by `feature.md`.
+5. Select and freeze a primary classifier only after it passes every mandatory holdout target.
+6. Implement the strict local-network Chat Completions client with consent, timeouts, no redirects, no retries, and redacted errors.
+7. Evaluate the complete cascade with a recorded reference fallback model; never transfer benchmark validation to an untested user-selected model.
+8. Integrate background scanning, candidate rows, review checkboxes, completion counts, retry, and safe shutdown.
+9. Complete the automated suite and user desktop verification before any Git operation is proposed.
+
+### F-003: KoboldCpp Vision Scan MVP
+
+- **Status:** in progress
+- **Tier:** Tier 1, core detection architecture
+- **Effort:** Medium
+- **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`, `evaluation/README.md`
+- **Likely implementation files:** endpoint/settings integration, bounded image preparation, strict OpenAI-compatible client and parser, server detector, scan workflow, background worker, settings dialog, main window, tests, and runtime dependency configuration
+- **Depends on:** shipped desktop foundation, existing scanner, and completed private-LAN endpoint validation
+- **Blocks:** completion of F-001 and the quarantine workflow
+
+Automated implementation and the live KoboldCpp desktop checklist are complete.
+The user approved the GUI behavior on 2026-09-19. The feature remains in
+progress until its pull request is merged.
+
+KoboldCpp runs the user-selected vision GGUF and matching `mmproj`. The app sends every supported image, one at a time, to a consented loopback or private-LAN OpenAI-compatible endpoint. It accepts only strict structured classifications, shows only screenshot/meme-style candidates, keeps every candidate unchecked, and never changes source files. The approved default base URL is `http://192.168.0.239:5001/v1/`, but it remains editable.
+
+Dependency graph:
+
+```text
+Desktop foundation + scanner
+        |
+        v
+Private-LAN endpoint and settings
+        |
+        v
+Strict KoboldCpp client and parser
+        |
+        v
+Background server-only scan workflow
+        |
+        v
+F-001 candidate-only results shipped
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Write failing base-URL, capability-discovery, and model-discovery tests.
+3. Implement safe KoboldCpp endpoint joining and connection testing with fake transports.
+4. Write failing image-preparation, request, response, privacy, and cancellation tests.
+5. Implement bounded in-memory image encoding and the no-redirect, no-retry Chat Completions client.
+6. Write failing server workflow, worker, consent, GUI-state, and result-row tests.
+7. Connect **Scan Folder** and keep every server candidate unchecked.
+8. Run the complete automated suite with live networking blocked.
+9. Complete manual desktop verification against the user-managed KoboldCpp server before any Git operation.
 
 ## Milestone 1: Desktop Foundation and Folder Scan
 
@@ -68,7 +167,8 @@ Success: A user can launch the app, select a folder, and see its supported image
 - Show a clear busy state and prevent duplicate scans.
 - Show only flagged candidates, never the complete ordinary-photo list.
 - Show each candidate's path, flagging reason, confidence, and review check state.
-- Start high-confidence candidates checked and uncertain candidates unchecked.
+- Start every unbenchmarked KoboldCpp candidate unchecked.
+- Omit unresolved uncertain images and include them in the skipped-analysis count.
 - Allow a completed or failed scan to be retried.
 - Replace prior results and review states on every rescan.
 - Show clear empty and failure states.
@@ -78,22 +178,21 @@ Thumbnails are not required for this milestone. They can be reconsidered after u
 
 Success: A user explicitly starts a scan and reviews only explained trash candidates without changing any source file.
 
-## Milestone 3: Local Candidate Detection
+## Milestone 3: KoboldCpp Candidate Detection
 
-This milestone supplies the detector required to complete F-001 and Milestone 2. The technical approach is not selected yet.
+This milestone is tracked as F-003 and supplies the detector required to complete F-001 and Milestone 2. F-002 remains as a scrapped historical record. The server-only MVP does not package or train a model.
 
-Evaluation infrastructure landed 2026-09-19: a strict result contract, manifest validation, dependency-free metrics, evaluation orchestration, and offline JSON/Markdown reports (`detection.py`, `evaluation.py`, `eval_cli.py`). The geometry baseline is implemented and tested. OCR and ONNX candidates require the real labeled dataset before they can be compared.
+Evaluation infrastructure landed 2026-09-19: a strict result contract, manifest validation, dependency-free metrics, evaluation orchestration, and offline JSON/Markdown reports (`detection.py`, `evaluation.py`, `eval_cli.py`). The geometry baseline and private dataset validator remain available for future accuracy work, but do not block the experimental KoboldCpp MVP.
 
-- Define representative screenshot, meme, uncertain, and ordinary-photo examples.
-- Agree on measurable accuracy, false-positive, performance, and package-size targets. Acceptance targets are codified in `AcceptanceTargets`.
-- Compare rules, metadata, OCR, ONNX models, or a hybrid approach.
-- Select the smallest fully local approach that meets the agreed targets.
+- Validate KoboldCpp version, vision capability, and loaded model before scanning.
+- Send every supported image only after consent to a user-managed vision server on loopback or the private local network.
+- Reject public Internet endpoints and redirects, and report failed analyses as skipped.
 - Return a candidate decision, user-readable reason, and confidence for each analyzed image.
-- Mark high-confidence candidates as checked.
-- Keep uncertain candidates visible and unchecked.
+- Keep every server candidate unchecked until that exact model is separately benchmarked.
+- Omit unresolved uncertain images and report their count.
 - Exclude ordinary photos from results.
 - Handle unreadable or damaged images without stopping the scan.
-- Keep all analysis offline.
+- Clearly disclose that every supported image is transferred to the configured LAN server using HTTP or HTTPS.
 
 Success: The app identifies likely screenshots and memes, explains each result, and leaves the final decision to the user.
 
@@ -120,12 +219,12 @@ Success: Review decisions can support later classifier evaluation without networ
 ## Milestone 6: Cross-Platform Release Readiness
 
 - Test the complete workflow on Linux, Windows, and macOS.
-- Package Python, PySide6, ONNX Runtime, models, and other required local assets.
+- Package Python, PySide6, Pillow, and other required local assets.
 - Verify first launch, upgrades, paths, permissions, and large scans.
 - Document installation and troubleshooting.
 - Decide signing and distribution separately for each operating system.
 
-Success: A non-technical user can install and run an offline build on each supported operating system.
+Success: A non-technical user can install the app, configure a supported private-LAN KoboldCpp vision server, and run a clearly disclosed scan on each supported operating system.
 
 ## Deferred Until After the MVP
 
@@ -134,4 +233,4 @@ Success: A non-technical user can install and run an offline build on each suppo
 - Image-quality detection.
 - GIF and HEIC support.
 - Restoration from quarantine.
-- A loopback-only OpenAI-compatible vision provider.
+- Public Internet vision providers.
