@@ -317,6 +317,7 @@ class MainWindow(QMainWindow):
             self._operation_error = error
 
     def _operation_finished(self, generation: int, thread: QThread) -> None:
+        thread.deleteLater()
         if self._thread is not thread:
             return
 
@@ -330,8 +331,6 @@ class MainWindow(QMainWindow):
         self._operation_kind = None
         self._operation_result = None
         self._operation_error = None
-        thread.deleteLater()
-
         if not current:
             if self._closing:
                 QTimer.singleShot(0, self.close)

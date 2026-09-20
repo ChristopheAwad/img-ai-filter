@@ -22,7 +22,7 @@ Current automated result after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-544 passed, 2 skipped, 1 warning in 54.27s
+545 passed, 2 skipped, 1 warning in 53.03s
 ```
 
 All tests ran with socket, DNS, and standard-library HTTP entry points blocked
@@ -338,9 +338,9 @@ architecture.
   `src/img_ai_filter/vision_response.py:77-122`; sequential aggregation is in
   `src/img_ai_filter/scan_workflow.py:60-138`; GUI connection, consent, scan,
   and result rendering are in `src/img_ai_filter/window.py:244-487`.
-- Automated implementation previously passed
-  `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q` with `542 passed, 2
-  skipped, 1 warning in 54.64s`. `tests/conftest.py` blocks real socket, DNS,
+- Automated implementation passed
+  `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q` with `545 passed, 2
+  skipped, 1 warning in 53.03s`. `tests/conftest.py` blocks real socket, DNS,
   and standard-library HTTP access unless a test replaces it with a fake.
 - Artifact inspection found only `evaluation/README.md` and
   `evaluation/manifest.example.csv` tracked below `evaluation/`; `sample-img/`

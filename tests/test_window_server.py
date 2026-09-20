@@ -438,6 +438,12 @@ def test_close_during_scan_cancels_transport_and_stops_worker(
 ) -> None:
     transport = FakeTransport()
     entered = Event()
+    deleted = []
+    monkeypatch.setattr(
+        window_module.OperationThread,
+        "deleteLater",
+        lambda thread: deleted.append(thread),
+    )
 
     def run_scan(*args, **kwargs):
         entered.set()
@@ -456,6 +462,7 @@ def test_close_during_scan_cancels_transport_and_stops_worker(
     qtbot.waitUntil(entered.is_set)
 
     window.close()
+    qtbot.waitUntil(lambda: len(deleted) == 1)
 
     assert transport.cancel_calls == 1
     assert window._thread is None or not window._thread.isRunning()

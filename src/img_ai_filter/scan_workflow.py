@@ -109,7 +109,7 @@ def run_server_scan(
             )
         except VisionCancelled:
             return summary(ScanState.CANCELLED)
-        except (ImagePayloadError, VisionClientError, OSError):
+        except (ImagePayloadError, VisionClientError):
             failed += 1
         else:
             analyzed += 1

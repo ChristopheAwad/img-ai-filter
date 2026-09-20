@@ -213,6 +213,20 @@ def test_unexpected_programming_error_is_not_counted_as_an_image_failure() -> No
         _run((path,), {path.name: TypeError("programming defect")})
 
 
+def test_unexpected_preparation_error_is_not_counted_as_an_image_failure() -> None:
+    path = Path("a.png")
+
+    with pytest.raises(TypeError, match="preparation defect"):
+        run_server_scan(
+            Path("/selected"),
+            CONFIG,
+            object(),
+            scan=lambda _: ScanResult((path,), ()),
+            prepare=lambda _: (_ for _ in ()).throw(TypeError("preparation defect")),
+            classify=lambda *args, **kwargs: pytest.fail("must not classify"),
+        )
+
+
 def test_cancel_before_scan_returns_cancelled_without_discovery_or_request() -> None:
     cancel = Event()
     cancel.set()
