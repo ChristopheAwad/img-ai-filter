@@ -37,6 +37,8 @@ class StandardHttpTransport:
         connection: http.client.HTTPConnection | None = None
         response: http.client.HTTPResponse | None = None
         try:
+            if cancel_event is not None and bool(getattr(cancel_event, "is_set")()):
+                raise HttpTransportError("The HTTP request was cancelled")
             parsed = urllib.parse.urlsplit(url)
             if (
                 parsed.scheme.lower() not in {"http", "https"}
@@ -73,6 +75,8 @@ class StandardHttpTransport:
             path = parsed.path or "/"
             if parsed.query:
                 path += "?" + parsed.query
+            if cancel_event is not None and bool(getattr(cancel_event, "is_set")()):
+                raise HttpTransportError("The HTTP request was cancelled")
             connection.request(method, path, body=body, headers=headers or {})
             if connection.sock is not None:
                 connection.sock.settimeout(read_timeout)

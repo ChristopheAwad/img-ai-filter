@@ -330,6 +330,7 @@ class MainWindow(QMainWindow):
         self._operation_kind = None
         self._operation_result = None
         self._operation_error = None
+        thread.deleteLater()
 
         if not current:
             if self._closing:

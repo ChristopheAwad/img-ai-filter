@@ -206,6 +206,13 @@ def test_every_image_failure_is_failed_scan() -> None:
     assert summary.failed == 2
 
 
+def test_unexpected_programming_error_is_not_counted_as_an_image_failure() -> None:
+    path = Path("a.png")
+
+    with pytest.raises(TypeError, match="programming defect"):
+        _run((path,), {path.name: TypeError("programming defect")})
+
+
 def test_cancel_before_scan_returns_cancelled_without_discovery_or_request() -> None:
     cancel = Event()
     cancel.set()

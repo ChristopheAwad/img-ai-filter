@@ -1,6 +1,6 @@
 # Image Filter
 
-Image Filter is a privacy-first desktop application for finding screenshots and memes in selected image folders. It does not change files during a scan.
+Image Filter is a privacy-conscious desktop application for finding screenshots and memes in selected image folders. It does not change files during a scan.
 
 The current experimental MVP connects **Scan Folder** to a user-managed
 KoboldCpp vision server on loopback or the private local network. Quarantine and

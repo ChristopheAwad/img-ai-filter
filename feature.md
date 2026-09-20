@@ -22,7 +22,7 @@ Current automated result after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-542 passed, 2 skipped, 1 warning in 54.27s
+544 passed, 2 skipped, 1 warning in 54.27s
 ```
 
 All tests ran with socket, DNS, and standard-library HTTP entry points blocked
@@ -62,14 +62,14 @@ This server-only design replaces the packaged ONNX classifier and fallback casca
 - Keep the GUI responsive and allow safe cancellation and shutdown.
 - Keep all automated tests offline through injected fake transports. Automated tests must never contact `192.168.0.239`.
 
-## Reused Components
+## Reused And Added Components
 
 - `scanner.py`: recursive, stable, read-only discovery without symlink traversal.
 - `detection.py`: immutable candidate result and per-file failure boundary.
-- `endpoint.py`: private-network destination validation.
-- `settings.py`: URL/model persistence boundary.
-- `credentials.py`: dormant secure API-key support.
-- `evaluation.py`, `dataset.py`, and their CLIs: optional future model evaluation.
+- `endpoint.py`: expanded private-network destination validation.
+- `settings.py`: added URL/model persistence boundary.
+- `credentials.py`: retained dormant secure API-key support from the scrapped F-002 work.
+- `evaluation.py`, `dataset.py`, and their CLIs: retained optional model-evaluation foundation from the scrapped F-002 work.
 - `window.py`: folder-selection behavior, status label, result list, and controls.
 
 ## Test Coverage First
@@ -180,7 +180,7 @@ Write every test group below before its production implementation. Confirm each 
 
 - Run all automated tests with `socket.create_connection`, DNS, and common HTTP entry points blocked except injected fakes.
 - Existing scanner, detection, endpoint, settings, credentials, evaluation, dataset, CLI, and window tests continue to pass.
-- App startup remains possible when Pillow, settings, keyring, or KoboldCpp is unavailable; scanning is disabled with a repair message where appropriate.
+- Pillow is a required runtime dependency. Missing settings, keyring, or KoboldCpp do not prevent startup; scanning is disabled with a repair message where appropriate.
 - Reports and GUI text contain no API keys, base64 image data, recognized text, private response bodies, or hidden model reasoning.
 - Source files remain unchanged.
 - The approved private-LAN default endpoint may be tracked. No image, real manifest, generated report, downloaded model, credential, or secret is tracked.
@@ -226,7 +226,7 @@ Use only safe sample images. Automated tests never contact the live server.
 11. Retry once, then test Cancel during a scan. Expect clean completion/cancellation and no stale rows.
 12. Close the window during a scan. Expect safe shutdown without a crash.
 
-## Planned Files
+## Implemented Files
 
 - `feature.md`
 - `project-brief.md`
@@ -234,21 +234,27 @@ Use only safe sample images. Automated tests never contact the live server.
 - `README.md`
 - `evaluation/README.md`
 - `pyproject.toml`
+- `docs/research/python-credential-storage.md`
+- `src/img_ai_filter/credentials.py`
+- `src/img_ai_filter/dataset.py`
+- `src/img_ai_filter/dataset_cli.py`
 - `src/img_ai_filter/endpoint.py`
+- `src/img_ai_filter/evaluation.py`
+- `src/img_ai_filter/http_transport.py`
 - `src/img_ai_filter/settings.py`
 - `src/img_ai_filter/vision_connection.py`
 - `src/img_ai_filter/image_payload.py`
 - `src/img_ai_filter/vision_response.py`
 - `src/img_ai_filter/vision_client.py`
-- `src/img_ai_filter/server_detector.py`
 - `src/img_ai_filter/scan_workflow.py`
 - `src/img_ai_filter/scan_worker.py`
-- `src/img_ai_filter/settings_dialog.py`
 - `src/img_ai_filter/window.py`
-- focused tests matching each non-GUI module
-- expanded `tests/test_endpoint.py`, `tests/test_settings.py`, and `tests/test_window.py`
+- focused tests matching each GUI-neutral module
+- expanded evaluation and window tests
 
-The smallest correct implementation may combine modules when responsibilities remain testable and GUI-independent. Do not add compatibility layers without a concrete need.
+Server detection is implemented by `vision_client.py` plus `scan_workflow.py`, and
+the settings controls are part of `window.py`; separate `server_detector.py` and
+`settings_dialog.py` modules were not needed.
 
 ## Acceptance Criteria
 

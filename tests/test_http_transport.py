@@ -255,6 +255,47 @@ def test_cancel_active_closes_the_current_connection(monkeypatch) -> None:
     assert isinstance(errors[0], HttpTransportError)
 
 
+def test_cancelled_request_sends_nothing() -> None:
+    cancel = Event()
+    cancel.set()
+
+    with pytest.raises(HttpTransportError, match="cancelled"):
+        StandardHttpTransport().request(
+            "GET",
+            "http://127.0.0.1:5001/v1/models",
+            connect_timeout=1,
+            read_timeout=1,
+            max_response_bytes=100,
+            cancel_event=cancel,
+        )
+
+    assert FakeConnection.instances == []
+
+
+def test_cancellation_after_connection_creation_sends_nothing() -> None:
+    class CancelsBeforeSend:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        def is_set(self) -> bool:
+            self.checks += 1
+            return self.checks >= 2
+
+    with pytest.raises(HttpTransportError, match="cancelled"):
+        StandardHttpTransport().request(
+            "GET",
+            "http://127.0.0.1:5001/v1/models",
+            connect_timeout=1,
+            read_timeout=1,
+            max_response_bytes=100,
+            cancel_event=CancelsBeforeSend(),
+        )
+
+    assert len(FakeConnection.instances) == 1
+    assert FakeConnection.instances[0].requests == []
+    assert FakeConnection.instances[0].closed is True
+
+
 def _capture_error(errors: list[Exception], action) -> None:
     try:
         action()

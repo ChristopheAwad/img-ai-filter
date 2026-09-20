@@ -8,9 +8,9 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
-from .image_payload import prepare_image
+from .image_payload import ImagePayloadError, prepare_image
 from .scanner import ScanError, scan_images
-from .vision_client import VisionCancelled, classify_image
+from .vision_client import VisionCancelled, VisionClientError, classify_image
 
 
 class ScanState(Enum):
@@ -109,7 +109,7 @@ def run_server_scan(
             )
         except VisionCancelled:
             return summary(ScanState.CANCELLED)
-        except Exception:
+        except (ImagePayloadError, VisionClientError, OSError):
             failed += 1
         else:
             analyzed += 1

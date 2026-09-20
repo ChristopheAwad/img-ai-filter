@@ -8,6 +8,7 @@ from threading import Event
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
+import img_ai_filter.window as window_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
 from img_ai_filter.scan_workflow import ScanCandidate, ScanState, ScanSummary
 from img_ai_filter.vision_connection import KoboldCppInfo, VisionConnectionError
@@ -266,6 +267,30 @@ def test_accepting_consent_runs_background_scan_and_shows_exact_summary(
         "1 ordinary, 1 uncertain, 1 failed, 1 unreadable folder."
     )
     assert not window.cancel_button.isEnabled()
+
+
+def test_completed_operation_thread_is_scheduled_for_deletion(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    deleted = []
+    monkeypatch.setattr(
+        window_module.OperationThread,
+        "deleteLater",
+        lambda thread: deleted.append(thread),
+    )
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(),
+        confirm_transfer=lambda *_: True,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: len(deleted) == 1)
+
+    assert window._thread is None
 
 
 def test_candidate_rows_include_details_and_start_unchecked(
