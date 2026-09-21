@@ -297,6 +297,53 @@ Implementation order:
 8. Run the complete offline suite and inspect artifacts and privacy.
 9. Complete manual desktop verification before any Git operation.
 
+### F-009: Confidence-Based Candidate Selection
+
+- **Status:** in progress; automated implementation and desktop verification complete
+- **Tier:** Tier 1, review usability
+- **Effort:** Medium because an editable threshold adds validated persistence, a settings dialog, scan-lifecycle boundaries, mixed checkbox states, and quarantine-safety regression coverage
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
+- **Likely implementation files:** settings persistence, main window and settings dialog, GUI review tests, settings tests, and documentation
+- **Depends on:** shipped F-001/F-003 candidate confidence results, F-004 checked-row quarantine contract, and F-007 bulk selection
+- **Blocks:** none; it reduces repetitive review while preserving manual confirmation
+
+Automatically check newly rendered candidates when their raw model-reported confidence is at or above a persisted user threshold. Default to 90% and allow integer settings from 50% through 100%. Apply a changed threshold only to later scan results so current manual choices are never overwritten. Keep bulk selection, exact-path quarantine confirmation, source validation, no-overwrite behavior, and every other file-safety rule unchanged. Confidence is not a calibrated probability, and automatic selection never starts a move.
+
+F-008 remains reserved for the previously planned reliability audit. F-009 is
+used here to avoid assigning that permanent ID to unrelated work.
+
+Dependency graph:
+
+```text
+F-001/F-003 candidate results
+            |
+            v
+F-007 bulk selection + F-004 quarantine safety
+            |
+            v
+F-009 validated threshold persistence
+            |
+            v
+F-009 settings dialog and next-scan auto-selection
+            |
+            v
+Manual review and explicit quarantine confirmation unchanged
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Record the complete network-blocked regression baseline.
+3. Write failing missing, malformed, boundary, read-failure, write-failure, and round-trip threshold-setting tests.
+4. Implement the GUI-neutral integer threshold contract with a safe 90% default and a 50% through 100% range.
+5. Write failing Settings-button, dialog, Save, Cancel, persistence-failure, retry, and busy-state tests.
+6. Add the small settings dialog and load the active threshold without changing current review rows.
+7. Write failing raw-confidence boundary, mixed-row, bulk-selection, rescan, restart, stale-signal, side-effect, and quarantine-readiness tests.
+8. Initialize new result-row check states from the active threshold while leaving existing scan and quarantine data contracts unchanged.
+9. Update durable documentation without describing confidence as a calibrated probability.
+10. Run focused tests, the complete offline suite, diff and artifact checks, and the privacy review.
+11. Complete manual desktop verification before any Git operation.
+
 ## Milestone 1: Desktop Foundation and Folder Scan
 
 **Status:** shipped 2026-09-19 (PR #1). Native folder-picker follow-up shipped 2026-09-19 (PR #2).
@@ -334,9 +381,10 @@ Thumbnails are not required for this milestone. They can be reconsidered after u
 
 Success: A user explicitly starts a scan and reviews only explained trash candidates without changing any source file.
 
-The unchecked-default requirement above remains current. F-007 adds a bulk
-**Select All**/**Clear All** control without changing the unchecked default:
-every candidate starts unchecked.
+The unchecked-default requirement above records the shipped Milestone 2
+behavior. F-007 added **Select All**/**Clear All** without changing it. F-009
+supersedes that initial-row rule with a saved high-confidence threshold while
+keeping manual review and explicit quarantine confirmation.
 
 ## Milestone 3: KoboldCpp Candidate Detection
 
@@ -357,6 +405,10 @@ Evaluation infrastructure landed 2026-09-19: a strict result contract, manifest 
 - Clearly disclose that every supported image is transferred to the configured LAN server using HTTP or HTTPS.
 
 Success: The app identifies likely screenshots and memes, explains each result, and leaves the final decision to the user.
+
+The unchecked bullet records the shipped F-003 contract. F-009 later adds an
+explicit user-controlled confidence threshold without claiming that arbitrary
+model confidence is calibrated or benchmarked accuracy.
 
 ## Milestone 4: Quarantine Workflow
 
@@ -387,7 +439,7 @@ release workflow.
 
 ## Milestone 6: Cross-Platform Release Readiness
 
-**Status:** planned after F-007 and F-008. The user confirmed this milestone is important.
+**Status:** planned after F-008 and F-009. The user confirmed this milestone is important.
 
 - Test the complete workflow on Linux, Windows, and macOS.
 - Package Python, PySide6, Pillow, and other required local assets.

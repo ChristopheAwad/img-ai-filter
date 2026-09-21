@@ -12,10 +12,10 @@ A privacy-conscious desktop app that finds screenshots and memes in user-selecte
 4. Before every scan, the application names the destination and warns that every supported image will be sent to the KoboldCpp server, including that plain HTTP is unencrypted when selected.
 5. After consent, the application analyzes images sequentially through the OpenAI-compatible Chat Completions endpoint.
 6. The application shows only images flagged as likely screenshots, memes, or related trash candidates. Ordinary photos do not appear in the results.
-7. Every displayed candidate starts unchecked so the user can review it.
+7. Candidates at or above the saved automatic-selection confidence threshold start checked; lower-confidence candidates start unchecked. The default is 90%, and model-reported confidence is not a calibrated probability.
 8. If analysis fails or remains uncertain, the image is omitted and included in visible uncertain or failed-analysis counts.
 9. Each displayed result explains its source path, flagging reason, and confidence, and shows a compact in-memory preview.
-10. The user reviews the unchecked candidates, can select or clear all candidates, adjusts individual checks, and reads each exact source and destination before any quarantine move starts.
+10. The user reviews all candidates, can select or clear all candidates, adjusts individual checks, and reads each exact source and destination before any quarantine move starts.
 11. During each accepted scan, the application shows elapsed time. It adds final duration to scan and confirmed quarantine results and saves bounded local activity history.
 
 Selecting a different folder clears results from the prior folder and enables a new scan. Cancelling folder selection changes nothing. A completed or failed scan can be retried, and each new scan replaces prior results and review states.
@@ -36,7 +36,8 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Recognize screenshots, captioned memes, social-post screenshots, reaction images, comics, and image macros.
 - Exclude ordinary photos from scan results.
 - Show a reason and confidence for every displayed candidate.
-- Start every displayed candidate unchecked.
+- Default automatic selection to model-reported confidence of 90% or higher.
+- Let the user save an integer threshold from 50% through 100%; apply a changed threshold only to later scan results and never overwrite current review choices.
 - Provide one bulk review control that selects all candidates when any are unchecked and clears all candidates when all are checked.
 - Continue after per-image endpoint failures, omit failed items, and show uncertain and failed-analysis counts. Treat a total outage as a failed scan.
 - Keep scanning and connection tests off the GUI thread, support cancellation, and close active requests during shutdown.
@@ -51,7 +52,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Keep the newest 100 combined scan and confirmed quarantine events in application settings. Scan records contain the UTC start time, source-folder path, model name, outcome, duration, and aggregate counts. Quarantine records also contain exact source and destination file paths and safe per-file outcomes.
 - Do not put endpoint addresses, scan candidate paths, candidate reasons, image content, thumbnails, credentials, raw exceptions, or server responses in activity history.
 - Let the user view newest-first expandable activity history and clear all app records after explicit confirmation. Clearing app history does not change quarantine move logs.
-- Do not record review labels. Review check states are temporary and are replaced by every rescan.
+- Do not record review labels. Review check states are temporary and are replaced by every rescan; new rows derive their initial state from the saved confidence threshold.
 - The MVP only moves files to quarantine. It does not delete them, and it offers no automatic restoration.
 
 ## Deferred Decisions
