@@ -344,6 +344,55 @@ Implementation order:
 10. Run focused tests, the complete offline suite, diff and artifact checks, and the privacy review.
 11. Complete manual desktop verification before any Git operation.
 
+### F-010: Self-Contained Linux Test Distribution
+
+- **Status:** in progress
+- **Tier:** Tier 2, release readiness and real-data testing
+- **Effort:** Large because a portable Qt desktop build requires a frozen Python runtime, native-library and plugin collection, repeatable artifact construction, clean-system smoke tests, desktop metadata, license notices, and Fedora compatibility checks
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
+- **Likely implementation files:** PyInstaller specification and hooks, Linux packaging scripts, application resource loading and icon assets, desktop/AppStream metadata, packaging tests, Linux CI workflow, dependency constraints, and release documentation
+- **Depends on:** shipped F-001, F-003, F-004, F-005, F-006, F-007, and F-009 workflows; a normal x86-64 Linux desktop remains the host platform
+- **Blocks:** convenient Fedora real-data testing without a separately installed Python environment and informs the broader Milestone 6 compatibility audit
+
+Produce two x86-64 Linux test artifacts from one validated PyInstaller
+one-directory build: an AppImage for one-file launch and a compressed portable
+directory as a no-FUSE fallback. Bundle CPython, application code, PySide6/Qt,
+Pillow, keyring, and their required Python/native runtime components. Keep
+KoboldCpp and its vision model external. Treat this as a test distribution, not
+a signed public release or a claim that Linux kernel, graphics, display-server,
+desktop-portal, and base C-library requirements can be bundled away.
+
+Dependency graph:
+
+```text
+Shipped desktop workflows through F-009
+                    |
+                    v
+F-010 frozen one-directory build + artifact tests
+                    |
+                    v
+F-010 portable tarball + AppImage
+                    |
+                    v
+Fedora x86-64 real-data acceptance
+                    |
+                    v
+Milestone 6 compatibility evidence
+```
+
+Implementation order:
+
+1. Approve the detailed test-first packaging contract in `feature.md`.
+2. Record the complete network-blocked application baseline and inspect the clean build inputs.
+3. Write failing metadata, resource, frozen-launch, image-codec, settings-persistence, privacy, and artifact-structure tests.
+4. Add the smallest application identity and resource-loading changes required by a frozen Linux executable.
+5. Pin packaging tools and create a deterministic PyInstaller one-directory build for Linux x86-64.
+6. Prove the frozen program starts without system Python or a source checkout and retains the existing private-LAN, scan, and quarantine contracts.
+7. Create the compressed portable-directory artifact and AppImage from the same tested payload.
+8. Add Linux CI artifact construction, checksums, license notices, and troubleshooting documentation without publishing a release automatically.
+9. Run the complete offline suite, artifact inspection, clean-environment smoke tests, and Fedora manual checklist.
+10. Wait for explicit desktop approval before proposing any Git operation.
+
 ## Milestone 1: Desktop Foundation and Folder Scan
 
 **Status:** shipped 2026-09-19 (PR #1). Native folder-picker follow-up shipped 2026-09-19 (PR #2).

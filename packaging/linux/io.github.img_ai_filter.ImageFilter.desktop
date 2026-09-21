@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Image Filter
+Exec=image-filter
+Icon=io.github.img_ai_filter.ImageFilter
+Terminal=false
+Categories=Graphics;

@@ -1,562 +1,757 @@
-# F-009: Confidence-Based Candidate Selection
+# F-010: Self-Contained Linux Test Distribution
 
 ## Status
 
-Plan written and approved by the user on 2026-09-21. Test-first implementation,
-automated verification, and desktop GUI verification are complete. The user
-approved the desktop checklist on 2026-09-21. Shipped in PR #9 on 2026-09-21.
+Plan written and approved by the user on 2026-09-21. The user selected Fedora
+x86-64 as the first test system and selected AppImage plus a compressed
+portable-directory fallback. Implementation is in progress.
 
-The worktree was clean before this plan was written:
-
-```text
-git status --short --branch
-## main...origin/main
-```
-
-Approved baseline before test changes:
+Approved baseline before feature tests:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-828 passed, 4 skipped, 1 warning in 33.36s
+882 passed, 4 skipped, 1 warning in 60.48s
 ```
 
-The required failing settings and GUI tests were written and observed failing
-before their production changes.
+Baseline environment: Python 3.14.7, x86-64, glibc 2.43, PySide6 6.11.2, and
+Pillow 12.3.0. This development environment is too new to define the Linux
+compatibility floor. The test artifacts were built with Python 3.11 on Debian
+Bookworm (glibc 2.36), with PySide6 6.11.2, Pillow 12.3.0, keyring 25.7.0,
+PyInstaller 6.10.0, appimagetool 1.9.1, and a checksum-pinned AppImage runtime.
 
-Focused verification after implementation:
+The required failing packaging/resource tests were written and observed failing
+before their production changes. Focused verification after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest \
-  tests/test_settings.py tests/test_window_server.py tests/test_window.py \
+  tests/test_linux_artifacts.py tests/test_linux_packaging.py \
+  tests/test_platform_integration.py tests/test_image_payload.py \
+  tests/test_settings.py tests/test_window.py tests/test_window_server.py \
   tests/test_scan_workflow.py tests/test_quarantine.py -q
-287 passed, 2 skipped in 4.13s
+408 passed, 2 skipped in 5.40s
 ```
 
 Complete offline verification after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-882 passed, 4 skipped, 1 warning in 57.50s
+924 passed, 4 skipped, 1 existing Pillow warning in 32.66s
 
 git diff --check
 clean
 ```
 
+Final generated artifacts:
+
+```text
+packaging-build/ImageFilter-0.1.0-x86_64.AppImage       80 MB
+packaging-build/ImageFilter-0.1.0-linux-x86_64.tar.gz  86 MB
+packaging-build/SHA256SUMS
+```
+
+Both checksum entries pass. The frozen one-directory payload, extracted tarball,
+and AppImage extraction mode each pass the bounded offscreen smoke test with
+isolated XDG settings directories. Host `ldd` inspection of the XCB platform
+plugin found no unresolved libraries. PyInstaller warned about graphical,
+portal, D-Bus, XCB, and Wayland libraries absent from the minimal Debian build
+container; these are normal desktop host libraries and require the planned
+Fedora desktop acceptance test. Implementation is waiting for that test and
+explicit user approval.
+
 ## Purpose
 
-Automatically check newly rendered candidates when their KoboldCpp-reported
-confidence meets a user-configured high-confidence threshold. This reduces
-repetitive review work while preserving manual review, exact-path quarantine
-confirmation, and every existing file-safety check.
+Make Image Filter practical to test on a separate Fedora x86-64 desktop without
+installing Python, PySide6, Pillow, keyring, pip, or the source project. Produce
+two artifacts from the same frozen application payload:
 
-KoboldCpp confidence is model-reported and is not a calibrated probability.
-The interface and documentation must call it confidence, must not claim that a
-90% value guarantees 90% accuracy, and must not claim that automatic selection
-makes a quarantine decision for the user.
+1. `ImageFilter-<version>-x86_64.AppImage` for one-file launch.
+2. `ImageFilter-<version>-linux-x86_64.tar.gz` as a portable no-FUSE fallback.
+
+KoboldCpp, its vision-capable GGUF model, and its matching `mmproj` remain
+external user-managed dependencies. The app must continue to connect only to a
+loopback or private-LAN KoboldCpp endpoint.
+
+## Scope Definition
+
+For this feature, "self-contained" means the artifacts include:
+
+- a compatible CPython interpreter;
+- all application modules;
+- PySide6 and the Qt libraries and plugins required by the app;
+- Pillow and the native image libraries required by supported formats;
+- keyring and all required Python package metadata, even though credentials are
+  dormant in the current GUI;
+- Python standard-library modules used by the app, including HTTP and TLS
+  support;
+- application icons, desktop metadata, license notices, and launch files.
+
+The artifacts may rely on facilities supplied by a normal Linux desktop:
+
+- the Linux kernel and x86-64 CPU support;
+- a compatible glibc baseline;
+- graphics drivers;
+- X11/XWayland or Wayland desktop services supported by bundled Qt;
+- a user D-Bus session and desktop portal when native portal dialogs are used;
+- a functioning certificate trust store for HTTPS;
+- FUSE for direct AppImage mounting, with the tarball supplied when FUSE is not
+  available.
+
+Do not advertise the artifacts as having zero operating-system requirements.
 
 ## Goals
 
-1. Check a new candidate automatically when its raw confidence is at or above
-   the configured threshold.
-2. Leave a new candidate unchecked when its raw confidence is below the
-   configured threshold.
-3. Use 90% as the default threshold.
-4. Let the user configure an integer threshold from 50% through 100% in a
-   separate settings dialog.
-5. Persist a successfully saved threshold across application launches.
-6. Apply a changed threshold only to candidates rendered by a later scan.
-7. Preserve all manual checkbox changes in the current result list.
-8. Preserve the existing **Select All**/**Clear All** behavior for mixed and
-   fully checked result lists.
-9. Preserve explicit quarantine confirmation and every source and destination
-   safety check.
+1. Launch Image Filter on Fedora x86-64 without system Python or pip.
+2. Launch without a source checkout and without depending on the build working
+   directory.
+3. Preserve every existing scan, privacy, network, and quarantine contract.
+4. Bundle all reachable Python runtime dependencies declared by the project.
+5. Generate the AppImage and tarball from one byte-identical application
+   payload before outer-container metadata differs.
+6. Provide deterministic names, version metadata, SHA-256 checksums, and
+   third-party notices.
+7. Build in a controlled environment old enough to avoid tying the artifact to
+   Fedora's newer glibc unnecessarily.
+8. Make build failures clear when required Qt plugins, Pillow codecs, tools, or
+   metadata are missing.
+9. Add automated artifact tests that never contact a real network service.
+10. Provide a safe manual Fedora checklist using disposable copied images and a
+    user-managed KoboldCpp server.
 
 ## Frozen Product Decisions
 
-- Track this work as F-009 because existing durable documentation reserves
-  F-008 for the reliability audit.
-- Store the threshold as an integer percentage.
-- The default is `90`.
-- The minimum accepted value is `50`.
-- The maximum accepted value is `100`.
-- A candidate is automatically checked when
-  `candidate.confidence >= threshold / 100`.
-- Compare the original floating-point confidence value. Do not compare the
-  rounded percentage displayed in the result row.
-- The threshold boundary is inclusive. At 90%, confidence `0.9` is checked and
-  confidence `0.899999` is unchecked.
-- All candidate categories use the same threshold.
-- Do not add per-category thresholds.
-- Do not add an enable/disable checkbox. A user who wants the most conservative
-  behavior can select 100%, but a candidate with confidence exactly `1.0` still
-  starts checked.
-- Add a visible **Settings** button near **Activity History**.
-- The button opens a separate modal settings dialog.
-- The dialog contains one integer percentage control labeled clearly as the
-  automatic-selection confidence threshold.
-- The dialog explains briefly that the threshold affects new scan results only.
-- The dialog provides **Save** and **Cancel**.
-- **Save** persists the value before updating the active in-memory threshold.
-- **Cancel**, dialog rejection, and window-close rejection do not change or
-  persist the threshold.
-- If persistence fails, keep the dialog open, show a user-readable error, and
-  retain the previously active threshold.
-- Disable **Settings** while a connection test, scan, or quarantine worker is
-  active. This prevents a threshold change during result production.
-- A successfully saved threshold applies to the next scan result rendering. It
-  does not recalculate check states in rows that already exist.
-- A rescan replaces all prior rows under the existing lifecycle. New rows use
-  the currently active threshold.
-- Automatically checked candidates are only selected for review. They are not
-  moved, copied, renamed, deleted, or logged as quarantine events until the user
-  explicitly requests and confirms a quarantine operation.
-- Keep **Move Checked to Quarantine** subject to the current valid source root,
-  valid quarantine root, non-overlap, idle-state, checked-row, exact-path
-  confirmation, source-identity, no-overwrite, and verified-copy contracts.
-- Do not send the threshold to KoboldCpp and do not alter the vision prompt,
-  response parser, candidate categories, scan summary, or activity-history
-  schema.
+- Track this feature as F-010. F-008 remains reserved for the separately
+  planned reliability audit, and F-009 is already shipped.
+- The first supported package target is Linux x86-64.
+- Fedora x86-64 is the first manual acceptance system.
+- Build the Linux artifact on a documented older compatible Linux base rather
+  than on the target Fedora host. Prefer Ubuntu 22.04 x86-64 unless initial
+  dependency probing proves that its toolchain cannot build the selected
+  PySide6/PyInstaller combination.
+- Use PyInstaller to create a one-directory payload.
+- Do not use PyInstaller one-file mode. AppImage supplies the single-file outer
+  artifact without adding a second extraction layer.
+- Create both the AppImage and tarball from the validated one-directory payload.
+- Use AppImage as the main tester-facing artifact.
+- Use a gzip-compressed tar archive for the initial fallback because Fedora can
+  extract it without another application package.
+- Do not create a `.deb`, RPM, Flatpak, Snap, system package repository, or
+  system-wide installer in F-010.
+- Do not require root access to launch either artifact.
+- Do not write application settings beside or inside the executable. Continue
+  using the existing stable Qt `QSettings` identity.
+- Do not bundle KoboldCpp, a GGUF model, an `mmproj`, sample user images,
+  evaluation datasets, or endpoint credentials.
+- Do not publish GitHub releases automatically in this feature. CI may retain
+  downloadable workflow artifacts for approved test builds.
+- Do not add automatic updates, crash reporting, telemetry, or analytics.
+- Do not add Linux code signing as a release blocker for this test artifact.
+  Generate SHA-256 checksums. Signing can be decided for a public release.
+- Keep current application version `0.1.0` unless a separate approved release
+  decision changes it. Artifact names derive from project metadata instead of a
+  duplicate hard-coded version.
+- Use one stable Linux desktop application identifier consistently in Qt,
+  desktop metadata, icon names, and AppStream metadata. Prefer
+  `io.github.ChristopheAwad.img_ai_filter` after verifying that it does not alter
+  the existing `QSettings` storage identity.
+- Add a project-owned application icon suitable for redistribution. Do not use
+  copyrighted third-party artwork or model/provider branding.
+- The application must remain usable if `xdgdesktopportal` platform-theme
+  integration is unavailable. A missing optional portal component must not
+  prevent startup or folder selection.
+- Keep all automated network access blocked. Frozen smoke tests use no live
+  KoboldCpp server or use only an injected/in-process fake where the existing
+  architecture permits it without opening sockets.
 
 ## Existing Contracts To Preserve
 
-- Selecting a source folder does not start a scan.
-- Every scan requires a tested loopback or private-LAN KoboldCpp endpoint.
-- Every scan requires explicit image-transfer consent.
-- Network tests use injected fake transports; automated tests never contact a
-  real network service.
-- Scanning runs off the GUI thread, processes one image at a time, supports
-  cancellation, and does not retry requests.
-- Ordinary and uncertain classifications do not appear as candidate rows.
-- Failed image analyses do not stop later images.
-- Candidate previews remain bounded, in memory, and generated off the GUI
-  thread.
-- Result rows retain path, category, reason, confidence, thumbnail, tooltip,
-  immutable source identity, and scan order.
-- **Select All** checks every current candidate when any row is unchecked.
-- **Clear All** unchecks every current candidate when all rows are checked.
-- Manual row changes immediately update bulk-selection and move-button states.
-- A quarantine move requires explicitly checked rows and exact-path
-  confirmation.
-- A source is revalidated against its scanned identity before a move.
+- The server is user-managed and outside this package.
+- Only loopback and private-LAN destinations are accepted.
+- Redirects and public Internet destinations are rejected.
+- Every scan requires an already tested endpoint and explicit transfer consent.
+- Plain HTTP remains visibly identified as unencrypted.
+- Images are processed one at a time with no retry.
+- Source selection alone does not scan, open images, or contact a server.
+- Scanning never edits, moves, renames, or deletes source files.
+- Candidate previews remain bounded and in memory.
+- Candidate selection continues to use the saved F-009 confidence threshold.
+- Quarantine remains an explicit exact-path confirmed move, not deletion.
 - Existing destinations are never overwritten.
+- Sources are revalidated before movement.
 - Cross-filesystem copies are verified before source removal.
-- Failed and conflicting rows remain available for correction and retry.
-- Scan and quarantine activity history retains its current privacy rules.
-- Review checkbox state remains temporary and is never restored after restart.
-- No local review-label collection is added.
+- Activity history retains its bounded storage and privacy rules.
+- Automated tests never contact any network service.
+- Windows-only tests remain skipped outside Windows.
 
-## Settings Data Contract
+## Artifact Contract
 
-Add the following GUI-neutral settings contract in `settings.py`:
+### Common Frozen Payload
 
-- key: `auto_select_confidence_percent`;
-- default: integer `90`;
-- valid stored form: a base-10 integer string from `50` through `100` inclusive;
-- load result: the validated integer threshold plus enough status information
-  for the caller to distinguish a valid stored value from a default used for a
-  missing or invalid value;
-- save input: an actual integer, with booleans rejected even though `bool` is an
-  `int` subclass in Python;
-- save result: success or failure without leaking raw storage exceptions to the
-  interface.
+The PyInstaller output directory must:
 
-Loading behavior:
+- contain one documented executable entry point;
+- contain the CPython runtime used by the frozen executable;
+- contain application modules and required Python standard-library modules;
+- contain PySide6 QtCore, QtGui, and QtWidgets support;
+- contain a working Qt platform plugin for the supported display path;
+- contain required Qt image format and style/plugin dependencies;
+- contain Pillow plugins and native libraries for PNG, JPEG, WebP, BMP, and
+  TIFF;
+- contain keyring package code and metadata needed for its guarded dynamic
+  import, without activating credentials in the GUI;
+- contain SSL/OpenSSL components needed by the standard-library HTTPS client;
+- contain application desktop/icon metadata and third-party notices;
+- contain no absolute source-tree dependency at runtime;
+- contain no `.venv`, test suite, coverage data, Git metadata, private datasets,
+  source images, endpoint settings, credentials, caches, or build-host home
+  paths unless a binary toolchain unavoidably embeds a nonfunctional debug path;
+- be read-only at runtime without preventing normal startup, settings, history,
+  scanning, or quarantine output to user-selected writable paths.
 
-- a missing key returns the default `90` and does not write to the store;
-- valid `50`, `90`, and `100` values return those exact integers;
-- leading or trailing whitespace is not accepted as a valid stored form;
-- signs, decimal forms, exponent forms, empty text, and nonnumeric text are
-  invalid;
-- values below `50` or above `100` are invalid;
-- malformed or out-of-range data returns the default `90` without raising;
-- a settings-store read exception returns the default `90` without raising;
-- loading never repairs, deletes, or overwrites a bad stored value implicitly.
+Treat PyInstaller warnings as review inputs. Maintain a small explicit allowlist
+only for imports that are proven optional and unreachable on the packaged Linux
+path. Do not suppress all missing-module warnings.
 
-Saving behavior:
+### Tarball
 
-- valid integer boundaries and interior values are written as canonical decimal
-  strings;
-- invalid types and out-of-range values are rejected before a store write;
-- a store write exception returns failure without changing the active in-memory
-  threshold;
-- saving this key does not alter endpoint, quarantine, or activity-history keys.
+The tarball must:
 
-Use the existing `DEFAULT_HIGH_CONFIDENCE_THRESHOLD` value of `0.9` as the
-semantic source for the default where practical. Avoid two independently
-maintained default values. Do not couple the production KoboldCpp scan to the
-offline `DetectionResult.default_checked` field; the server workflow uses
-`ScanCandidate.confidence` directly.
+- contain one top-level directory named with application version and target;
+- preserve executable permissions;
+- include a short packaged-use README and third-party notices;
+- extract and launch from a user-writable location without installation;
+- launch when the extraction path includes spaces;
+- not require FUSE;
+- not require root privileges;
+- produce the same application behavior as the common frozen payload.
 
-## User Interface Contract
+### AppImage
 
-Add a small `CandidateSelectionSettingsDialog` in `window.py` unless existing
-code structure clearly requires a separate GUI module. Keep the change local and
-do not introduce a general settings framework.
+The AppImage must:
 
-The dialog must:
+- target x86-64 and use the common frozen payload;
+- contain a valid `AppRun` entry point;
+- contain a valid desktop file and icon link/layout expected by AppImage tools;
+- expose the product name, version, icon, categories, and executable identity;
+- launch after the executable bit is set;
+- not write inside the mounted AppImage;
+- work from a path containing spaces;
+- fail with documented guidance when direct mounting is unavailable;
+- have the tarball fallback documented rather than requiring the tester to
+  install FUSE.
 
-- have a descriptive title such as **Settings**;
-- show one labeled integer percentage control;
-- constrain the control to `50` through `100`;
-- initialize it from the active threshold supplied by `MainWindow`;
-- show the `%` suffix;
-- state that matching candidates from future scans start checked;
-- state that existing review choices do not change;
-- provide standard **Save** and **Cancel** buttons;
-- make Save the accepting action and Cancel the rejecting action;
-- expose the selected integer only after acceptance;
-- remain keyboard accessible through native Qt controls;
-- show a concise persistence error without raw exception text if saving fails;
-- remain open after a persistence failure so the user can retry or cancel.
+### Checksums And Naming
 
-The main window must:
+Use these forms, populated from project version metadata:
 
-- load the threshold once during initialization;
-- retain the active threshold as an integer percentage;
-- add a **Settings** button near **Activity History** using the existing
-  secondary-button visual language and pointing-hand cursor;
-- disable **Settings** during any active worker operation;
-- leave **Settings** enabled while idle regardless of folder, endpoint, result,
-  or quarantine configuration;
-- open the modal dialog with the active threshold;
-- on Cancel, leave settings storage, active threshold, current rows, status
-  text, and control states unchanged;
-- on successful Save, update the active threshold without changing current row
-  checks;
-- avoid replacing the main scan status with a settings success message;
-- use the newly active threshold when the next valid `ScanSummary` is rendered.
+```text
+ImageFilter-0.1.0-x86_64.AppImage
+ImageFilter-0.1.0-linux-x86_64.tar.gz
+SHA256SUMS
+```
 
-Result rendering must set each new item's initial check state exactly once:
+`SHA256SUMS` must list both artifacts with standard lowercase SHA-256 digests.
+Generating the file twice from unchanged artifacts must produce identical
+content. Full byte-for-byte reproducibility of the compressed artifacts is a
+goal only if it can be achieved with bounded timestamps and ordering without
+substantial custom tooling; record any remaining nondeterminism honestly.
 
-- confidence below threshold: `Qt.CheckState.Unchecked`;
-- confidence equal to threshold: `Qt.CheckState.Checked`;
-- confidence above threshold: `Qt.CheckState.Checked`.
+## Build And Dependency Contract
 
-After all rows are rendered, the existing control update path must derive:
+- Add packaging dependencies separately from application runtime dependencies.
+  A source installation for normal development must not install PyInstaller or
+  AppImage construction tools unless the packaging extra or documented build
+  environment is selected.
+- Pin PyInstaller and Python packaging tool versions used by CI.
+- Resolve and record exact versions of runtime packages used in release
+  artifacts. Do not silently resolve a different PySide6 or Pillow version on
+  every build.
+- Keep `pyproject.toml` as the application package authority. Do not turn
+  `.opencode/package.json` into an application manifest.
+- Prefer a checked-in PyInstaller `.spec` file over a long undocumented command.
+- Keep hidden imports and collected metadata explicit when PyInstaller cannot
+  infer them, especially for guarded keyring loading and Pillow plugins.
+- Include only Qt modules and plugins required by the current application.
+  Avoid collecting the complete Qt SDK without evidence that it is needed.
+- Ensure `configure_native_file_dialogs()` still runs before Qt imports in the
+  frozen process.
+- Add a small, documented build script only where it removes error-prone manual
+  sequencing. The script must validate its inputs, stop on failure, use paths
+  relative to the repository root, and not delete unrelated directories.
+- Put generated output under an ignored, dedicated packaging build directory.
+- Never read developer credentials or normal user settings during artifact
+  construction.
+- Build commands must work non-interactively in CI.
+- The CI workflow must use least-privilege read-only repository permissions and
+  must not publish a release or push changes.
 
-- **Select All** when at least one row is unchecked;
-- **Clear All** when every row is checked;
-- move-button readiness from whether any row is checked plus all existing
-  quarantine readiness conditions.
+## Application Identity And Resources
+
+Add only the runtime application identity needed for desktop packaging:
+
+- set a stable application display name;
+- set an application version from package metadata or one authoritative source;
+- set a packaged application icon through Qt;
+- preserve the existing organization/application names used by `QSettings` so
+  package installation does not unexpectedly lose or fork existing settings;
+- load icon/resource data through a frozen-safe method that also works during
+  source development and tests;
+- do not depend on the current working directory;
+- provide PNG sizes and/or SVG as required by Qt, AppImage, desktop files, and
+  AppStream metadata;
+- include accessible text metadata and a valid desktop category;
+- avoid file associations, MIME handlers, autostart, privileged capabilities,
+  or shell integration not required to launch the app.
 
 ## Detailed Test Coverage First
 
 ### 1. Baseline And Worktree Inspection
 
-Before changing tests or production code:
+Before test or implementation changes:
 
 1. Run `git status --short --branch`.
-2. Preserve any unrelated user or agent changes that appeared after this plan.
-3. Run the complete offline baseline exactly:
+2. Preserve all unrelated user or agent changes.
+3. Run the complete suite exactly:
 
    ```text
    QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
    ```
 
-4. Record pass, skip, warning, and duration results in this Status section.
-5. If the baseline fails, report the failure and determine whether it is related
-   before writing feature tests. Do not modify unrelated code to hide it.
-6. Confirm `tests/conftest.py` still blocks sockets, DNS, and standard-library
-   HTTP for the full test run.
+4. Record passes, skips, warnings, and duration in this Status section.
+5. Confirm `tests/conftest.py` still blocks sockets, DNS, and standard-library
+   HTTP.
+6. Record current Python, PySide6, Pillow, keyring, glibc, and architecture
+   versions used by the development environment. Do not treat the current
+   Python 3.14 venv as the release runtime automatically; select and document a
+   supported build Python after compatibility tests.
+7. If baseline tests fail, diagnose before packaging work. Do not modify
+   unrelated behavior to make packaging appear successful.
 
-### 2. Settings Load Tests
+### 2. Packaging Metadata Tests
 
-Write failing GUI-neutral tests in `tests/test_settings.py` before production
-changes. Prove:
+Write failing tests for small parseable metadata and build helper behavior
+before adding production packaging files. Prove:
 
-- the key string is exactly `auto_select_confidence_percent`;
-- an absent key returns default `90` with missing/default status;
-- absent loading performs no write or delete;
-- stored `50`, `51`, `89`, `90`, `99`, and `100` load exactly;
-- `49` and `101` fall back to `90` with invalid/default status;
-- empty text and whitespace-only text fall back to `90`;
-- ` 90`, `90 `, `+90`, `-90`, `090`, `90.0`, `9e1`, `nan`, `inf`, and ordinary
-  words are handled according to the canonical integer-string rule above;
-- non-string values returned by a fake store do not crash and fall back to `90`;
-- store read exceptions do not crash and fall back to `90`;
-- malformed loads do not repair, delete, or overwrite storage;
-- threshold loading does not read or modify credentials;
-- endpoint, quarantine, and history settings remain untouched.
+- project name and version are obtained from `pyproject.toml`;
+- an empty, missing, malformed, non-string, or unexpected version causes a safe
+  build failure instead of an incorrectly named artifact;
+- artifact names match the frozen naming contract exactly;
+- only Linux and x86-64 are accepted by this first packaging target;
+- unsupported architectures such as aarch64 fail with a clear message;
+- the desktop file uses the agreed stable application identifier;
+- the desktop `Exec` value points to the packaged launcher without shell
+  interpolation;
+- the desktop file does not request a terminal;
+- desktop categories and icon names are present;
+- AppStream XML, if added, parses and carries the matching ID, name, summary,
+  launchable, version, and license fields;
+- missing icon sizes, desktop metadata, notices, or launcher files fail artifact
+  validation;
+- no metadata embeds a KoboldCpp endpoint, username, home directory, or build
+  checkout path.
 
-The implementation agent must not loosen these cases by calling `int()` on
-arbitrary strings. Validate canonical decimal text before conversion.
+Prefer tests of project-owned validators over brittle tests that duplicate an
+external tool's complete implementation.
 
-### 3. Settings Save Tests
+### 3. Resource Loading And Application Identity Tests
 
-Add failing tests proving:
+Write failing unit or `pytest-qt` tests proving:
 
-- `50`, `90`, and `100` save as exact canonical strings;
-- representative interior integers save correctly;
-- `49`, `101`, negative integers, floats, numeric strings, `None`, and booleans
-  are rejected before any write;
-- a store write exception reports failure without raising;
-- failed save does not alter other stored values;
-- successful save changes only the threshold key;
-- save then load round-trips the exact valid value;
-- save does not change endpoint readiness, quarantine folder state, activity
-  history, or credentials.
+- the app has the expected display name while source-run;
+- the app icon loads while source-run;
+- the icon resource can be resolved through a simulated frozen resource root;
+- a missing or corrupt icon fails safely with a generic icon and does not stop
+  the window from opening;
+- the application version matches `pyproject.toml` or the selected single
+  authoritative version source;
+- setting desktop identity does not change the organization and application
+  values used by existing `QSettings`;
+- icon/resource resolution never depends on `Path.cwd()`;
+- changing the current directory before launch does not prevent resource
+  loading;
+- initialization still configures Linux platform integration before importing
+  Qt;
+- no resource test writes into the source package or frozen resource root.
 
-### 4. Settings Dialog Tests
+### 4. PyInstaller Specification Tests
 
-Write failing `pytest-qt` tests in `tests/test_window_server.py`, or a focused
-new GUI test file only if that is materially clearer. Prove:
+Add tests or a deterministic validation command that initially fails until the
+specification exists and proves:
 
-- the main window exposes a visible **Settings** button while idle;
-- the button is enabled at startup without a selected folder or tested endpoint;
-- activating the button opens the modal dialog;
-- the dialog starts at `90` when the setting is absent or invalid;
-- a valid persisted value initializes the control exactly;
-- the percentage control has minimum `50`, maximum `100`, and `%` suffix;
-- the explanatory future-scan text is visible;
-- Save and Cancel controls are visible and keyboard accessible;
-- Cancel after editing writes nothing and preserves the active value;
-- rejecting with the window close control behaves like Cancel;
-- Save persists the selected value and updates the active threshold;
-- a persistence failure shows a safe error, does not accept the dialog, and
-  preserves the old active value;
-- the persistence error does not include raw exception text or stored content;
-- retrying Save after a transient failure can succeed;
-- opening the dialog again shows the newly saved active value;
-- no candidate rows are required to configure the threshold.
+- the spec builds from the intended application entry point;
+- the build is one-directory, not PyInstaller one-file;
+- GUI/windowed mode does not create an unnecessary console window where the
+  option applies;
+- the application package is collected;
+- required PySide6 modules and Qt plugins are collected;
+- required Pillow plugins are collected;
+- keyring package code and metadata are collected despite dynamic import;
+- standard-library SSL support is collected;
+- application icons and notices are included;
+- tests, evaluation datasets, `.git`, `.venv`, caches, and packaging output are
+  excluded;
+- missing required inputs fail the build;
+- stale output is replaced only inside the dedicated generated build directory;
+- the build does not mutate source files or user-selected data.
 
-Use real Qt button interaction where practical. Do not prove the user-facing
-contract only by calling a private handler.
+Do not assert exact internal PyInstaller-generated filenames unless they are a
+required public contract. Validate capabilities and required classes of files.
 
-### 5. Initial Auto-Selection Boundary Tests
+### 5. Frozen Launch Smoke Tests
 
-Replace the F-007 assertion that every confidence starts unchecked with failing
-tests for the new contract. Using valid `ScanCandidate` objects, prove at the
-default 90% threshold:
+After observing the intended failures, build the one-directory payload and test
+it in a clean environment. Prove:
 
-- confidence `0.0` starts unchecked;
-- confidence `0.5` starts unchecked;
-- confidence `0.899999` starts unchecked;
-- confidence exactly `0.9` starts checked;
-- confidence `0.900001` starts checked;
-- confidence exactly `1.0` starts checked.
+- the executable starts with no system Python available on `PATH`;
+- the executable starts outside the repository;
+- the executable starts with an empty temporary `HOME`, `XDG_CONFIG_HOME`, and
+  `XDG_DATA_HOME`;
+- the executable starts when its path includes spaces;
+- the executable starts while its installation directory is read-only;
+- changing the working directory does not change startup behavior;
+- startup succeeds without a KoboldCpp server;
+- no startup network request occurs;
+- the main window can be created with `QT_QPA_PLATFORM=offscreen` for automated
+  smoke testing;
+- a bounded smoke-test mode or external process harness exits cleanly instead
+  of hanging CI;
+- startup errors return a nonzero status and useful diagnostics without a Python
+  traceback being shown as the normal GUI experience;
+- no source checkout is opened or imported at runtime.
 
-Prove configured boundary behavior:
+Do not add a production backdoor that bypasses application safety behavior just
+for tests. A process-level smoke option may create and close the normal window,
+or tests may use an external timeout and controlled Qt environment.
 
-- at 50%, `0.499999` is unchecked and `0.5` is checked;
-- at 100%, `0.999999` is unchecked and `1.0` is checked;
-- at an interior threshold such as 73%, `0.729999` is unchecked and `0.73` is
-  checked.
+### 6. Frozen Image Codec Tests
 
-Prove raw-value behavior:
+Use generated temporary images, not repository user data. Prove through the
+frozen payload that:
 
-- choose a confidence below the threshold that rounds to the same whole percent
-  shown in the row and confirm it remains unchecked;
-- choose a confidence exactly at the threshold and confirm it is checked;
-- retain the current whole-percent display unless a test demonstrates a user
-  safety ambiguity requiring a separate approved product decision.
+- valid PNG opens and produces a bounded PNG request payload and thumbnail;
+- valid JPEG and `.jpeg` variants work;
+- valid WebP works, including native codec availability;
+- valid BMP works;
+- valid TIFF and `.tif` variants work;
+- corrupt data for every supported suffix fails safely;
+- a suffix/decoded-format mismatch remains rejected;
+- oversized dimensions and decompression-bomb limits retain existing behavior;
+- EXIF orientation, transparency conversion, digest, byte count, and source
+  identity behavior remain unchanged;
+- codec tests write only to their temporary directories;
+- source test files remain byte-for-byte unchanged.
 
-### 6. Mixed Rows And Bulk Selection Tests
+If running the existing Python test modules through the frozen GUI is not
+practical, add a narrow project-owned artifact probe that exercises the real
+frozen `image_payload` module. Do not copy or reimplement its decoding logic in
+the test probe.
 
-Add or update failing tests proving:
+### 7. Qt Plugin And Desktop Tests
 
-- mixed below-threshold and above-threshold candidates preserve scan order;
-- every row preserves its exact `ScanCandidate` object in `UserRole`;
-- paths, categories, reasons, confidence text, thumbnails, and tooltips are
-  unchanged;
-- mixed initial states show enabled **Select All**;
-- selecting **Select All** checks both automatically checked and initially
-  unchecked rows and changes the control to **Clear All**;
-- selecting **Clear All** unchecks all rows regardless of automatic origin;
-- manually unchecking an automatically checked row works normally;
-- manually checking a below-threshold row works normally;
-- the bulk-control label always derives from current check states, not from
-  confidence values;
-- repeated bulk actions do not change candidate data, order, or count;
-- automatic origin is not persisted and requires no extra row metadata.
+Prove automatically where possible and manually where display services are
+required:
 
-### 7. Threshold Change Timing Tests
+- Qt can initialize in offscreen mode from the frozen payload;
+- the required Linux display platform plugin is present;
+- PNG thumbnails render through Qt;
+- the desktop file validates with the available standard validator;
+- AppStream metadata validates when that tool is available in the build image;
+- icon files decode and have required dimensions;
+- the app remains launchable when
+  `QT_QPA_PLATFORMTHEME=xdgdesktopportal` cannot load an optional portal theme;
+- an existing user-provided `QT_QPA_PLATFORMTHEME` remains respected;
+- folder selection is tested manually on Fedora Wayland and X11/XWayland where
+  available;
+- missing FUSE affects only direct AppImage mounting and does not affect the
+  tarball payload.
 
-Add failing lifecycle tests proving:
+Do not assume that the PySide6 wheel contains a desktop portal theme plugin.
+Verify actual contents and preserve a usable fallback.
 
-- changing the threshold with current rows visible does not alter any current
-  check state;
-- current manual changes also remain untouched after Save;
-- Cancel leaves current rows untouched;
-- a failed Save leaves current rows and active behavior untouched;
-- the next rescan clears prior rows under the existing lifecycle;
-- newly rendered rows from that rescan use the new threshold;
-- changing from 90% to 50% affects only later results;
-- changing from 50% to 100% affects only later results;
-- restarting the app loads the persisted threshold for later scan results;
-- review check states themselves do not survive restart;
-- a malformed persisted value after restart safely uses 90%.
+### 8. Settings And History Persistence Tests
 
-### 8. Empty, Failure, And Cancellation Tests
+Use isolated temporary XDG paths. Prove with the frozen executable or a
+project-owned frozen probe:
 
-Add or retain tests proving:
+- first launch with no settings succeeds;
+- the base URL, discovered model, confidence threshold, quarantine directory,
+  and activity history use writable user configuration rather than the package
+  directory;
+- settings persist after process restart;
+- settings persist when the AppImage filename changes but the application
+  identity remains the same;
+- settings are shared intentionally between source-run and packaged builds only
+  according to the unchanged existing QSettings organization/application
+  identity;
+- malformed existing settings retain current safe fallback behavior;
+- an unwritable configuration directory produces safe user-visible behavior
+  rather than writing beside the executable;
+- clearing history still leaves quarantine move logs untouched;
+- no image bytes, candidate reasons, raw server responses, credentials, or
+  endpoint address are added to activity-history records;
+- no packaging test reads or changes the developer's real settings.
 
-- a completed scan with no candidates has no selected rows and disables the bulk
-  control;
-- a failed scan creates no rows and performs no threshold-based action;
-- an invalid worker result creates no rows;
-- a cancelled scan creates no rows;
-- a worker exception creates no rows;
-- per-image analysis failures do not create phantom checked rows;
-- ordinary and uncertain classifications remain omitted;
-- a threshold-load failure does not prevent startup or scanning;
-- a threshold-save failure does not prevent later scans using the old value;
-- no private exception or model response appears in status or dialog text.
+### 9. Network And Privacy Regression Tests
 
-### 9. Busy State And Stale Signal Tests
+Retain the existing global network block and prove:
 
-Add or update tests proving:
+- launch performs no DNS lookup, socket creation, HTTP request, or HTTPS request;
+- all existing endpoint validation tests pass unchanged;
+- public hosts, public IP addresses, unsafe hostname resolution, userinfo,
+  fragments, queries, and redirects remain rejected;
+- loopback and private-LAN URL normalization remains unchanged;
+- consent remains required before image preparation and transfer;
+- no tests contact GitHub, package indexes, AppImage services, KoboldCpp, or any
+  external host after dependencies are installed;
+- build logs and artifact metadata contain no saved endpoint, credentials,
+  image bytes, user paths, or model response;
+- the package adds no telemetry, crash upload, update request, or analytics;
+- HTTPS continues to use normal certificate validation and does not add an
+  insecure bypass.
 
-- connection-test start disables **Settings** and completion restores it;
-- connection failure restores **Settings**;
-- scan start disables **Settings**;
-- scan success, failure, and cancellation restore **Settings**;
-- quarantine start disables **Settings**;
-- quarantine success, partial failure, worker error, and cancellation/close paths
-  restore or dispose controls correctly under existing behavior;
-- disabled **Settings** cannot open a dialog or mutate the threshold;
-- stale connection, scan, or quarantine worker signals cannot reopen, enable, or
-  apply settings to a newer operation incorrectly;
-- safe application close does not save an unaccepted dialog value or change row
-  checks.
+Dependency download is a controlled build-environment setup operation, not an
+application runtime behavior. Separate it clearly from offline tests.
 
-### 10. Quarantine Readiness And Safety Tests
+### 10. Scan And Quarantine Regression Tests
 
-Add or retain assertions proving:
+Run existing focused tests and add artifact-level probes only where needed to
+prove packaging did not alter behavior:
 
-- an automatically checked row does not enable moving without a valid
-  quarantine folder;
-- with valid non-overlapping roots, at least one automatically checked row
-  enables **Move Checked to Quarantine** while idle;
-- a list containing only below-threshold unchecked rows keeps move disabled;
-- manually clearing all automatically checked rows disables move;
-- manually checking a below-threshold row can enable move when all folder
-  conditions pass;
-- only rows checked when the move is requested enter the quarantine plan;
-- confirmation lists every exact selected source and destination;
-- declining confirmation moves nothing and preserves row checks;
-- source identity is revalidated before any move;
-- changed sources remain untouched and available for review;
-- destination conflicts are never overwritten;
-- cross-filesystem verification remains required before source removal;
-- successfully moved rows are removed;
-- failed and conflicting rows retain their current check states for retry;
-- remaining-row bulk-control state is recalculated from check states, not from
-  confidence.
+- source folder selection remains idle and read-only;
+- scan runs off the GUI thread;
+- one image is processed at a time;
+- cancellation and close behavior remain bounded;
+- failed and uncertain results remain counted and omitted correctly;
+- threshold boundaries and manual checkbox changes remain correct;
+- thumbnails remain in memory;
+- quarantine root overlap remains rejected;
+- exact source and destination paths are shown before movement;
+- declining confirmation changes no files;
+- changed sources and destination conflicts remain untouched;
+- verified cross-filesystem behavior remains unchanged;
+- move logs are written only in the selected quarantine directory;
+- read-only installation directories do not interfere with operations on
+  explicitly selected writable data.
 
-### 11. Side-Effect And Privacy Tests
+Automated tests continue to use fake transports and disposable files. Real-data
+network testing occurs only in the manual acceptance gate.
 
-Use injected fake boundaries and temporary files to prove:
+### 11. Tarball Construction Tests
 
-- loading, editing, saving, or cancelling the threshold sends no network
-  request;
-- automatic check initialization sends no network request beyond the scan's
-  existing injected classification calls;
-- changing checkbox state starts no scan or quarantine operation;
-- automatic selection creates no activity-history event;
-- threshold configuration does not alter existing activity-history records;
-- automatic selection creates no quarantine move-log event;
-- no source file is created, edited, renamed, moved, or deleted by threshold
-  configuration or row initialization;
-- no destination file or thumbnail cache is created;
-- endpoint URL, model, credentials, image content, reasons, and paths are not
-  stored with the threshold;
-- current checkbox state is not added to settings;
-- no review-label key, file, model, or dialog is introduced.
+Write failing artifact tests before adding the final tarball construction step.
+Prove:
 
-### 12. Documentation Tests And Review
+- the expected output name derives from project metadata;
+- exactly one expected top-level directory exists;
+- the executable bit survives archive and extraction;
+- extraction rejects or detects unexpected absolute paths and `..` traversal in
+  the produced archive inspection;
+- symlinks, if any are required for native libraries, remain internal and do
+  not point outside the extracted directory;
+- packaged README and third-party notices are present;
+- no generated file is owned conceptually by a privileged user requirement;
+- launch after extraction does not require root, Python, pip, or FUSE;
+- extraction and launch work under a directory containing spaces;
+- rebuilding does not append stale files from an earlier payload;
+- checksum generation includes the final archive.
 
-Update durable product text after focused production tests pass:
+### 12. AppImage Construction Tests
 
-- `README.md` explains the default 90% automatic-selection threshold, Settings
-  control, next-scan timing, and model-reported-confidence limitation;
-- `README.md` keeps manual review and exact quarantine confirmation explicit;
-- `project-brief.md` changes the old all-unchecked decision to the approved
-  threshold behavior without rewriting historical shipped records;
-- `roadmap.md` keeps F-009 `in progress` until desktop approval and the selected
-  Git workflow complete;
-- historical F-007 text remains clear that all-unchecked was the contract of
-  that shipped feature before F-009;
-- F-008 remains reserved for the reliability audit;
-- no document calls confidence a calibrated probability;
-- no document claims automatic move, deletion, or model accuracy.
+Write failing artifact tests before adding the final AppImage construction step.
+Prove:
 
-### 13. Focused Verification
+- the AppDir has a valid `AppRun`;
+- `AppRun` resolves its own location and does not depend on the launch working
+  directory;
+- the desktop file and icon are in the required AppDir locations;
+- AppImage architecture is x86-64;
+- the AppImage version/name matches project metadata;
+- required payload files match the tested one-directory payload;
+- executable permissions are correct;
+- launch succeeds with a clean XDG environment where CI supports AppImage;
+- extraction mode can inspect or run the payload when FUSE is unavailable;
+- read-only AppImage mounting does not cause writes inside the package;
+- no update metadata is advertised unless an update mechanism is separately
+  approved and implemented;
+- checksum generation includes the final AppImage.
 
-After implementation, run at minimum:
+If the CI host cannot mount AppImages, use AppImage extraction for automated
+payload verification and retain direct-launch testing for the Fedora manual
+gate. Do not weaken the manual acceptance requirement.
+
+### 13. Native Library Inspection
+
+Inspect the executable, extension modules, Qt plugins, and native libraries.
+Record and review:
+
+- unresolved `NEEDED` shared libraries;
+- accidental links to build-directory paths;
+- glibc and GLIBCXX symbol requirements relative to the selected baseline;
+- bundled versus host-provided Qt libraries;
+- Pillow JPEG, WebP, TIFF, zlib, and related native codec dependencies;
+- OpenSSL dependencies used by Python HTTPS;
+- XCB/Wayland platform plugin dependencies;
+- duplicate libraries with incompatible versions;
+- executable stack or unexpected writable/executable segment warnings where
+  available tooling reports them;
+- architecture of every executable/shared-object class sampled or validated.
+
+Maintain an explicit host-library expectation list. A test must fail for a new
+unresolved library unless it is reviewed and added deliberately.
+
+### 14. Artifact Content And Secret Inspection
+
+Before manual testing, inspect generated outputs and prove:
+
+- no `.git` directory or Git credentials exist;
+- no `.venv`, pytest cache, coverage output, bytecode cache, or local build log
+  exists in the payload;
+- no files from `evaluation/` or private datasets are present unless an
+  explicitly required license notice is separately identified;
+- no test fixture images are present;
+- no source or quarantine folders are present;
+- no QSettings files, history values, move logs, keyring data, tokens, passwords,
+  endpoint URLs, or model names from the build host are present;
+- no private keys or signing material are present;
+- no unexpected large files or model weights are present;
+- package licenses and third-party notices cover bundled Python, PyInstaller,
+  PySide6/Qt, Pillow, keyring, and transitive packages;
+- artifact size is reported and an unexpected material increase fails or
+  requires review rather than passing silently.
+
+### 15. CI Workflow Tests And Review
+
+Add a Linux packaging workflow only after local construction and tests pass.
+Prove by review and workflow execution:
+
+- the workflow has `contents: read` permissions;
+- it checks out the repository and uses a pinned major or commit for actions;
+- it uses the approved Python and controlled build environment;
+- it installs exact packaging/runtime dependency versions;
+- it runs the complete network-blocked test suite before packaging;
+- it builds the one-directory payload once;
+- it validates that payload before creating either outer artifact;
+- it builds both artifacts from the validated payload;
+- it runs metadata, content, native-library, checksum, and smoke checks;
+- it uploads only the two artifacts, checksum file, and necessary test reports;
+- pull-request builds do not publish GitHub releases;
+- failures stop artifact publication;
+- caches cannot inject generated payload files into final artifacts;
+- no secret is required for ordinary test-artifact builds.
+
+### 16. Documentation Review
+
+After implementation tests pass, update durable documentation:
+
+- `README.md` provides a Linux test-build download/launch section;
+- README states clearly that Python installation is not required for artifacts;
+- README states clearly that KoboldCpp, model, and `mmproj` remain external;
+- README explains `chmod +x` for AppImage without telling users to use root;
+- README gives tarball extraction/launch as the FUSE fallback;
+- README explains that plain HTTP image transfers are unencrypted;
+- README describes supported first target as Fedora x86-64 testing, not all
+  Linux distributions;
+- README documents checksum verification;
+- README documents where settings/history and quarantine move logs are stored or
+  how to identify them safely after measuring actual packaged behavior;
+- README has concise troubleshooting for startup, portal/file-dialog, display,
+  FUSE, permissions, and KoboldCpp connectivity;
+- `project-brief.md` records the packaging boundary and continued external
+  server/model decision without claiming the broader Milestone 6 is complete;
+- `roadmap.md` keeps F-010 in progress through desktop approval and the chosen
+  Git workflow;
+- no document calls the artifact universally portable or dependency-free at the
+  operating-system level;
+- no document claims signing, automatic updates, or support not tested here.
+
+### 17. Focused Verification
+
+Run at minimum after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest \
-  tests/test_settings.py tests/test_window_server.py tests/test_window.py \
+  tests/test_platform_integration.py tests/test_image_payload.py \
+  tests/test_settings.py tests/test_window.py tests/test_window_server.py \
   tests/test_scan_workflow.py tests/test_quarantine.py -q
 ```
 
-If a dedicated dialog test file is added, include it explicitly. Record pass,
-skip, warning, and duration results in Status.
+Also run the dedicated packaging metadata, artifact, and frozen smoke-test files
+added by this feature. Record pass, skip, warning, artifact-size, and duration
+results in Status.
 
-### 14. Full Regression And Artifact Inspection
+### 18. Full Regression And Final Inspection
 
-After focused tests pass:
+After focused and artifact tests pass:
 
-1. Run the complete suite:
+1. Run the full suite:
 
    ```text
    QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
    ```
 
 2. Run `git diff --check`.
-3. Run `git status --short --ignored` and inspect generated artifacts.
-4. Confirm no test contacted a network service.
-5. Review the complete diff for accidental changes to endpoint validation,
-   transfer consent, confidence parsing, scan summaries, activity history,
-   quarantine planning, or file operations.
-6. Confirm no persistent checkbox state, image data, candidate reason, or path
-   was added to settings.
-7. Record all verification results in Status.
+3. Run `git status --short --ignored` and inspect generated outputs.
+4. Confirm generated build directories and artifacts are ignored and no source
+   or user data is hidden in ignored output.
+5. Re-run the artifact validators against the exact files supplied for manual
+   testing.
+6. Verify SHA-256 checksums from a separate working directory.
+7. Extract the tarball into a clean temporary path and run its smoke test.
+8. Extract and inspect the AppImage; directly launch it where FUSE is available.
+9. Run native-library inspection and secret/content inspection.
+10. Review the complete diff for changes outside packaging, identity, resources,
+    tests, CI, and documentation.
+11. Confirm no automated test contacted a real network service.
+12. Record all commands and results in Status.
 
 ## Implementation Sequence
 
 1. Obtain explicit user approval of this complete plan.
-2. Inspect the worktree and run the complete network-blocked baseline.
-3. Add failing threshold load tests for missing, valid, invalid, boundary, and
-   read-failure cases.
-4. Add failing threshold save tests for valid, invalid, boundary, type, and
-   write-failure cases.
-5. Run those tests and confirm they fail because the settings contract is
-   missing.
-6. Implement the threshold key and minimal GUI-neutral load/save functions in
-   `settings.py`.
-7. Run the focused settings tests until they pass.
-8. Add failing dialog structure, Save, Cancel, close, persistence-failure, and
-   retry tests.
-9. Add failing main-window Settings-button idle and busy-state tests.
-10. Run those tests and confirm they fail for the intended missing UI behavior.
-11. Implement the small settings dialog, Settings button, startup load, and
-    successful-save state update.
-12. Run the focused settings UI tests until they pass.
-13. Replace the all-confidence-unchecked GUI test with failing default and
-    configured threshold boundary tests.
-14. Add failing raw-confidence, mixed-row, bulk-selection, and move-readiness
+2. Inspect worktree state and preserve unrelated changes.
+3. Run and record the complete offline baseline.
+4. Verify the intended Linux build base, Python version, CPU architecture, and
+   available AppImage construction tool without changing application code.
+5. Add failing packaging metadata tests for valid, missing, malformed, boundary,
+   and unsupported-target cases.
+6. Add failing resource and application identity tests, including changed
+   working directory and simulated frozen root cases.
+7. Run those tests and confirm failure is caused by missing F-010 behavior.
+8. Add the minimal icon/resource identity implementation and metadata files.
+9. Run focused source-mode tests until they pass.
+10. Add failing PyInstaller specification validators and frozen smoke tests.
+11. Run them and confirm failure because the frozen build is absent or incomplete.
+12. Add pinned packaging inputs and the one-directory PyInstaller specification.
+13. Build the payload and resolve only evidence-backed missing imports, Qt
+    plugins, Pillow codecs, keyring metadata, SSL components, and native
+    libraries.
+14. Run frozen launch, clean-XDG, changed-working-directory, read-only-install,
+    codec, Qt, settings, privacy, and application regression tests.
+15. Add failing tarball structure, permissions, traversal, content, and launch
     tests.
-15. Add failing next-scan-only, rescan, restart, failure, cancellation, busy,
-    stale-signal, and side-effect tests.
-16. Run all new GUI tests and confirm they fail because result rendering still
-    initializes every row unchecked.
-17. Change `_finish_scan()` to initialize each new row from raw confidence and
-    the active integer threshold.
-18. Keep the existing row data, display text, tooltip, thumbnail, ordering, and
-    post-render control update behavior unchanged.
-19. Run focused GUI, settings, scan, and quarantine tests until they pass.
-20. Update `README.md`, `project-brief.md`, and `roadmap.md` to describe only the
-    implemented behavior.
-21. Run the full network-blocked suite, diff check, artifact inspection, and
-    privacy review.
-22. Ask the user to complete the manual desktop checklist below.
-23. Wait for exact `Approved` or failure evidence.
-24. Only after desktop approval ask whether to create a PR, commit, or push.
+16. Implement tarball construction from the already validated payload.
+17. Run tarball tests until they pass.
+18. Add failing AppDir/AppImage metadata, payload, permissions, extraction, and
+    launch tests.
+19. Implement AppImage construction from the same validated payload.
+20. Run AppImage tests until they pass.
+21. Add checksum generation and failing checksum-content tests, then implement
+    the smallest deterministic checksum step.
+22. Run native-library, host-dependency, secret, content, license, and size
+    inspections; fix only demonstrated packaging defects.
+23. Add Linux CI after local artifact construction is stable.
+24. Update README, project brief, roadmap, and packaged documentation.
+25. Run focused tests, the full offline suite, artifact rebuild, all artifact
+    validators, diff checks, and final inspections.
+26. Supply the exact AppImage, tarball, and checksum files to the user through
+    the agreed workspace or CI artifact location.
+27. Ask the user to complete the Fedora manual checklist below.
+28. Wait for exact `Approved` or failure evidence.
+29. Only after approval ask whether to create a PR, commit, or push.
 
 Do not delegate production implementation until the main session has written
-and run the failing tests. The main session retains ownership of tests,
-integration, Git operations, approval gates, and the complete-suite verdict.
+and run the failing tests. The main session owns tests, approval gates,
+integration, Git operations, and the full-suite result. Any delegated agent must
+receive the exact artifact contract and may implement only an independent seam
+after its failing tests exist.
 
 ## Expected Files
 
@@ -567,99 +762,137 @@ Planning and durable documentation:
 - `project-brief.md`
 - `README.md`
 
-Production:
+Likely application and metadata changes:
 
-- `src/img_ai_filter/settings.py`
-- `src/img_ai_filter/window.py`
+- `pyproject.toml`
+- `src/img_ai_filter/__main__.py`
+- a small package resource helper only if direct resource loading cannot remain
+  clear in `__main__.py`
+- project-owned icon/resource files under a new documented package or packaging
+  resource directory
+- Linux `.desktop` metadata
+- AppStream metadata
+- third-party notices or a generated-notice input manifest
 
-Tests:
+Likely packaging files:
 
-- `tests/test_settings.py`
-- `tests/test_window_server.py`
-- `tests/test_window.py` only if a general window-control assertion belongs
-  there more clearly
-- a new focused settings-dialog test file only if keeping those tests separate
-  materially improves clarity
+- a PyInstaller `.spec` file
+- a pinned packaging requirements or constraints file
+- a small Linux packaging script or scripts
+- AppDir/AppImage launcher metadata
+- generated-output ignore rules
+- `.github/workflows/linux-package.yml`
 
-Do not modify `scan_workflow.py`, `vision_client.py`, `vision_response.py`,
-`http_transport.py`, `quarantine.py`, or `activity_history.py` unless a failing
-test demonstrates a contract defect directly required by F-009. Do not add a
-runtime dependency, general settings framework, persistent review model,
-per-category threshold, automatic move, or new network request.
+Likely tests:
 
-## Manual Desktop Acceptance Checklist
+- a focused packaging metadata test file
+- a focused resource/application identity test file or additions to existing
+  platform/window tests
+- artifact validation tests
+- frozen smoke/probe support kept separate from normal application behavior
+- existing image, settings, endpoint, scan, GUI, and quarantine regression tests
 
-Use disposable source and quarantine folders. Keep a backup outside both
-folders. The automated suite never contacts a live KoboldCpp server.
+Exact filenames are implementation details to select after tests establish the
+smallest clear structure. Do not add a broad packaging framework, release
+server, updater, installer service, or general build system.
 
-1. Start KoboldCpp with a vision model and matching `mmproj`.
-2. Launch the app with `.venv/bin/python -m img_ai_filter`.
-3. Select **Settings** and confirm the threshold initially shows `90%`.
-4. Select Cancel and reopen Settings; confirm the value remains `90%`.
-5. Save `50%`, reopen Settings, and confirm it remains `50%`.
-6. Test the KoboldCpp connection and select a disposable source folder that is
-   likely to produce candidates with different confidence values.
-7. Start a scan and approve transfer only if the displayed private-LAN or
-   loopback destination is correct.
-8. During scanning, confirm **Settings** is disabled.
-9. After completion, confirm candidates at or above 50% start checked and lower
-   candidates start unchecked.
-10. Confirm no file moved and no quarantine confirmation opened automatically.
-11. Change some checkboxes manually, open Settings, save `100%`, and confirm all
-    current checkbox choices remain unchanged.
-12. Run a new scan and confirm only candidates showing raw confidence exactly
-    `1.0`, if any, start checked; manually verify that current rows were replaced.
-13. Confirm **Select All** and **Clear All** still operate on every current row.
-14. Configure a disposable non-overlapping quarantine folder and confirm move is
-    enabled only while at least one row is checked.
-15. Request a move and confirm every exact source and destination path is shown
-    before any operation starts.
-16. Decline confirmation and confirm no file moves and row checks remain.
-17. If safe sample files are available, approve one disposable move and confirm
-    only checked files move.
-18. Restart the application, reopen Settings, and confirm `100%` persisted while
-    no prior candidate rows or review checks were restored.
-19. Open **Activity History** and confirm settings changes and checkbox changes
-    did not create activity events.
+## Manual Fedora Desktop Acceptance Checklist
 
-Reply `Approved` if every step passes. Otherwise provide the failed step, error
-text, and a screenshot.
+Use a separate Fedora x86-64 test system. Use disposable copies of images and a
+new quarantine directory. Keep the originals outside both directories. The
+automated suite does not test a live server.
+
+1. Download or transfer the AppImage, tarball, and `SHA256SUMS` into one folder.
+2. Run `sha256sum --check SHA256SUMS` and confirm both artifacts report `OK`.
+3. Confirm Python is not required by temporarily using a shell where `python`,
+   `python3`, and `pip` are not on `PATH`; do not uninstall system components.
+4. Mark the AppImage executable with
+   `chmod +x ImageFilter-0.1.0-x86_64.AppImage`.
+5. Launch the AppImage from the file manager and from a terminal.
+6. Confirm one Image Filter window opens with the expected title and icon and no
+   terminal traceback.
+7. Close and relaunch it from a directory whose path contains spaces.
+8. If AppImage mounting fails, record the exact message, extract the tarball,
+   and launch its documented executable without installing FUSE.
+9. Confirm the tarball version opens with the same title, icon, and controls.
+10. Open the source-folder and quarantine-folder pickers. Confirm each dialog is
+    usable under the current Fedora session and cancellation changes nothing.
+11. Start KoboldCpp with a vision-capable GGUF and matching `mmproj` on loopback
+    or a private-LAN computer.
+12. Enter the `/v1/` base URL and select **Test Connection**. Confirm the version
+    and discovered model appear.
+13. Try one deliberately public URL and confirm the app rejects it without
+    sending a request.
+14. Select a disposable folder containing copied PNG, JPEG, WebP, BMP, and TIFF
+    examples, including ordinary photos, screenshots, and memes.
+15. Select **Scan Folder**. Check the displayed destination carefully and
+    consent only if it is the intended private server.
+16. Confirm the UI remains responsive, progress advances, previews display, and
+    ordinary photos are omitted from candidate rows.
+17. Confirm the automatic-selection threshold and **Select All**/**Clear All**
+    behavior match the existing settings.
+18. Confirm scanning did not change any source filename, bytes, or location.
+19. Close and reopen the app. Confirm endpoint/model settings, threshold, and
+    activity history persist while candidate rows and checkbox choices do not.
+20. Select a new empty, non-overlapping quarantine folder.
+21. Check only disposable candidates, request quarantine, and inspect every
+    source and destination path before approval.
+22. Decline once and confirm nothing moves.
+23. Repeat and approve one safe disposable move. Confirm only selected files
+    move and `.img-ai-filter-moves.jsonl` appears in the quarantine folder.
+24. Confirm no settings, logs, images, or other files were written beside the
+    AppImage or into the extracted application directory.
+25. Open **Activity History** and confirm expected scan/quarantine events without
+    image content, server address, credentials, or raw responses.
+26. Report Fedora version, desktop environment, Wayland or X11, which artifact
+    was used, and any warnings shown in the terminal.
+
+Reply `Approved` if every applicable step passes. Otherwise provide the failed
+step, exact error text, terminal output, and a screenshot when the failure is
+visible.
 
 ## Acceptance Criteria
 
-- Missing or invalid threshold settings safely use 90%.
-- Valid integer values from 50% through 100% persist exactly.
-- The dialog saves only on explicit Save and preserves state on Cancel or
-  persistence failure.
-- New candidates at or above the raw-confidence threshold start checked.
-- New candidates below the threshold start unchecked.
-- Changing the threshold never rewrites existing manual review choices.
-- The next scan uses the new threshold and replaces old review state.
-- Bulk selection remains correct for mixed, all-checked, and all-unchecked rows.
-- Automatic selection never starts or bypasses quarantine confirmation.
-- Every quarantine source and destination safety contract remains active.
-- Settings and automatic selection create no network, filesystem, move-log, or
-  activity-history side effects.
-- No checkbox state or review label is persisted.
-- Documentation describes confidence accurately and does not promise calibrated
-  probability or model accuracy.
-- The complete automated suite passes with networking blocked.
-- The user approves the desktop checklist before any Git operation is proposed.
+- The AppImage and tarball are created from one validated PyInstaller
+  one-directory payload.
+- Both launch on the selected Fedora x86-64 test system without a separately
+  installed Python environment or source checkout.
+- The tarball works without FUSE and neither artifact requires root.
+- Required Python packages, Qt plugins, Pillow codecs, SSL support, application
+  resources, and metadata are present.
+- Missing or optional desktop portal integration does not prevent normal use.
+- Settings and activity history persist in user configuration, not inside or
+  beside the artifacts.
+- Existing endpoint, consent, scan, threshold, privacy, and quarantine contracts
+  remain unchanged.
+- Automated tests remain fully network-blocked.
+- Artifact validation finds no user data, credentials, private datasets, model
+  files, build caches, or source-control metadata.
+- Native-library inspection finds no unexplained unresolved dependency on the
+  supported Fedora target.
+- Desktop and AppStream metadata validate.
+- SHA-256 checksums verify both final artifacts.
+- Documentation accurately states the supported target and external KoboldCpp
+  requirements.
+- The complete automated suite passes.
+- The user approves the Fedora desktop checklist before any Git operation is
+  proposed.
 
 ## Explicitly Deferred
 
-- Calibrating confidence against a representative labeled dataset.
-- Claiming a statistical probability or accuracy guarantee.
-- Per-category thresholds.
-- Decimal threshold input.
-- A threshold below 50% or above 100%.
-- A separate automatic-selection enable/disable toggle.
-- Recalculating current rows when the threshold changes.
-- Persisting manual review state.
-- Recording local review labels.
-- Sorting or filtering by confidence or category.
-- Automatically starting quarantine.
-- Skipping exact-path confirmation.
-- Permanent deletion or automatic restoration.
+- Bundling KoboldCpp, GGUF models, or `mmproj` files.
+- GPU driver installation or hardware-specific KoboldCpp builds.
+- ARM/aarch64, 32-bit x86, or other CPU architectures.
+- Declaring support for every Linux distribution.
+- RPM, DEB, Flatpak, Snap, Nix, or system repository packaging.
+- Windows and macOS packaging.
+- Public GitHub release publication.
+- Automatic updates or update metadata.
+- Code signing, certificate procurement, or trusted-store integration.
+- Full byte-for-byte reproducible-build guarantees if upstream tools retain
+  uncontrolled metadata.
+- Bundling a CA trust store or accepting untrusted HTTPS certificates.
+- Activating dormant credential UI or promising every Linux keyring backend.
+- Changing settings identity or adding settings migration.
 - F-008 reliability-audit implementation.
-- Milestone 6 packaging, signing, and distribution.
+- Completing the full cross-platform Milestone 6 release-readiness claim.

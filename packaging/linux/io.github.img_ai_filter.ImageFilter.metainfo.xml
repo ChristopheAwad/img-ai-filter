@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.img_ai_filter.ImageFilter</id>
+  <name>Image Filter</name>
+  <summary>Find screenshots and memes with a private vision server</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <launchable type="desktop-id">io.github.img_ai_filter.ImageFilter.desktop</launchable>
+  <releases>
+    <release version="0.1.0" date="2026-09-21"/>
+  </releases>
+</component>
