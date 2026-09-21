@@ -17,10 +17,14 @@ from img_ai_filter.settings import (
     SettingsStatus,
     clear_api_key,
     clear_endpoint_settings,
+    clear_quarantine_folder,
     load_api_key,
     load_endpoint_settings,
+    load_quarantine_folder,
     save_api_key,
     save_endpoint_settings,
+    save_quarantine_folder,
+    QUARANTINE_FOLDER_KEY,
 )
 from img_ai_filter.endpoint import build_endpoint_config
 
@@ -303,3 +307,176 @@ def test_reading_key_does_not_overwrite_or_delete_it() -> None:
 
 def test_module_must_not_import_pyside6() -> None:
     assert "PySide6" not in inspect.getsource(settings_mod)
+
+
+# ---------------------------------------------------------------------------
+# Quarantine folder persistence
+# ---------------------------------------------------------------------------
+
+
+def test_quarantine_folder_key_is_exact() -> None:
+    assert QUARANTINE_FOLDER_KEY == "quarantine_folder"
+
+
+def test_absent_quarantine_setting_is_unconfigured() -> None:
+    loaded = load_quarantine_folder(InMemorySettingsStore())
+
+    assert loaded.status is SettingsStatus.UNCONFIGURED
+    assert loaded.folder is None
+
+
+def test_valid_stored_quarantine_folder_loads(tmp_path) -> None:
+    store = InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
+
+    loaded = load_quarantine_folder(store)
+
+    assert loaded.status is SettingsStatus.READY
+    assert loaded.folder == tmp_path
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_or_whitespace_quarantine_needs_repair(value: str) -> None:
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: value})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+    assert loaded.folder is None
+
+
+def test_stored_missing_directory_quarantine_needs_repair(tmp_path) -> None:
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path / "gone")})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+
+
+def test_stored_ordinary_file_quarantine_needs_repair(tmp_path) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("not a folder")
+
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(target)})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+
+
+def test_stored_symlink_quarantine_needs_repair(tmp_path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Cannot create symbolic links: {error}")
+
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(link)})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+
+
+def test_stored_reparse_point_quarantine_needs_repair(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        settings_mod,
+        "is_windows_reparse_point",
+        lambda folder: folder == tmp_path,
+    )
+
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+    assert loaded.folder is None
+
+
+def test_stored_unwritable_quarantine_needs_repair(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings_mod.os, "access", lambda folder, flags: False)
+
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+    assert loaded.folder is None
+
+
+def test_quarantine_folder_check_can_be_injected(tmp_path) -> None:
+    store = InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
+
+    rejected = load_quarantine_folder(
+        store, folder_check=lambda _folder: False
+    )
+    accepted = load_quarantine_folder(
+        store, folder_check=lambda _folder: True
+    )
+
+    assert rejected.status is SettingsStatus.NEEDS_REPAIR
+    assert accepted.status is SettingsStatus.READY
+
+
+def test_quarantine_read_failure_returns_needs_repair() -> None:
+    class FailingReadStore:
+        def read(self, key):
+            raise OSError("store unavailable")
+
+    loaded = load_quarantine_folder(FailingReadStore())
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+    assert loaded.folder is None
+
+
+def test_loading_quarantine_settings_performs_no_writes(tmp_path) -> None:
+    store = InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
+
+    load_quarantine_folder(store)
+
+    assert store.writes == []
+
+
+def test_save_quarantine_folder_persists_value(tmp_path) -> None:
+    store = InMemorySettingsStore()
+
+    persisted = save_quarantine_folder(store, tmp_path)
+
+    assert persisted is True
+    assert store.values[QUARANTINE_FOLDER_KEY] == str(tmp_path)
+
+
+def test_save_quarantine_folder_failure_reports_false(tmp_path) -> None:
+    class FailingWriteStore:
+        def write(self, key, value):
+            raise OSError("disk full")
+
+    assert save_quarantine_folder(FailingWriteStore(), tmp_path) is False
+
+
+def test_quarantine_settings_do_not_touch_endpoint_keys(tmp_path) -> None:
+    store = InMemorySettingsStore()
+    _seed_valid(store)
+
+    save_quarantine_folder(store, tmp_path)
+
+    assert store.values[settings_mod.ENDPOINT_URL_KEY] == CONFIG.url
+    assert store.values[settings_mod.ENDPOINT_MODEL_KEY] == CONFIG.model
+
+
+def test_clear_quarantine_folder_removes_only_its_key(tmp_path) -> None:
+    store = InMemorySettingsStore(
+        {QUARANTINE_FOLDER_KEY: str(tmp_path)}
+    )
+    _seed_valid(store)
+
+    clear_quarantine_folder(store)
+
+    assert QUARANTINE_FOLDER_KEY not in store.values
+    assert store.values[settings_mod.ENDPOINT_URL_KEY] == CONFIG.url
+    assert store.values[settings_mod.ENDPOINT_MODEL_KEY] == CONFIG.model

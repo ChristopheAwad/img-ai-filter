@@ -1,11 +1,13 @@
 """Main desktop window."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+import os
 from pathlib import Path
 from threading import Event
 from typing import Any
 
-from PySide6.QtCore import QSettings, QThread, QTimer, Qt
+from PySide6.QtCore import QSettings, QSize, QThread, QTimer, Qt
+from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -27,19 +29,57 @@ from img_ai_filter.endpoint import (
     build_vision_endpoint_config,
 )
 from img_ai_filter.http_transport import StandardHttpTransport
+from img_ai_filter.quarantine import (
+    MOVE_LOG_NAME,
+    MoveStatus,
+    QuarantineError,
+    QuarantineState,
+    QuarantineSummary,
+    build_quarantine_plan,
+    execute_quarantine_plan,
+    validate_quarantine_folder,
+    validate_quarantine_roots,
+)
 from img_ai_filter.scan_worker import OperationThread
-from img_ai_filter.scan_workflow import ScanState, ScanSummary, run_server_scan
+from img_ai_filter.scan_workflow import (
+    ScanCandidate,
+    ScanState,
+    ScanSummary,
+    run_server_scan,
+)
 from img_ai_filter.scanner import ScanError, ScanResult, scan_images
 from img_ai_filter.settings import (
     ENDPOINT_URL_KEY,
+    QUARANTINE_FOLDER_KEY,
     SettingsStatus,
+    clear_quarantine_folder,
+    load_quarantine_folder,
     load_vision_endpoint_settings,
+    save_quarantine_folder,
     save_vision_endpoint_settings,
 )
 from img_ai_filter.vision_connection import VisionConnectionError, discover_koboldcpp
 
 
 DEFAULT_SERVER_URL = "http://192.168.0.239:5001/v1/"
+
+
+def _quarantine_confirm_parts(
+    items: Iterable[tuple[str, str]], folder: str
+) -> tuple[str, str, str]:
+    item_list = [(str(source), str(destination)) for source, destination in items]
+    count = len(item_list)
+    word = "file" if count == 1 else "files"
+    heading = (
+        f"Move {count} checked {word} to the quarantine folder {folder}? "
+        "The transfer is a verified byte-for-byte copy, and a source file "
+        "that changes after scanning is left in place."
+    )
+    detailed = "\n".join(
+        f"Source: {source}\nDestination: {destination}"
+        for source, destination in item_list
+    )
+    return "Move checked files to quarantine?", heading, detailed
 
 
 class _QSettingsStore:
@@ -68,6 +108,8 @@ class MainWindow(QMainWindow):
         transport_factory: Callable[[], Any] = StandardHttpTransport,
         discover: Callable[..., Any] = discover_koboldcpp,
         run_scan: Callable[..., ScanSummary] = run_server_scan,
+        run_quarantine: Callable[..., Any] | None = None,
+        confirm_quarantine: Callable[[tuple[str, ...], str], bool] | None = None,
         confirm_transfer: Callable[[str, bool], bool] | None = None,
         initial_config: VisionEndpointConfig | None = None,
         resolver: Callable[..., Any] | None = None,
@@ -78,9 +120,18 @@ class MainWindow(QMainWindow):
         self._transport_factory = transport_factory
         self._discover = discover
         self._run_scan = run_scan
+        self._run_quarantine = (
+            run_quarantine if run_quarantine is not None else MainWindow._default_run_quarantine
+        )
+        self._confirm_quarantine = confirm_quarantine
         self._confirm_transfer = confirm_transfer
         self._resolver = resolver
         self._selected_folder: Path | None = None
+        self._results_folder: Path | None = None
+        self._quarantine_folder: Path | None = None
+        self._quarantine_missing = False
+        self._stored_quarantine_raw: str | None = None
+        self._moving = False
         self._config: VisionEndpointConfig | None = None
         self._thread: OperationThread | None = None
         self._active_transport: Any = None
@@ -107,6 +158,16 @@ class MainWindow(QMainWindow):
                     self._config = loaded.config
             except Exception:
                 self._config = None
+
+        try:
+            self._stored_quarantine_raw = self._settings_store.read(QUARANTINE_FOLDER_KEY)
+            loaded_quarantine = load_quarantine_folder(self._settings_store)
+            if loaded_quarantine.status is SettingsStatus.READY:
+                self._quarantine_folder = loaded_quarantine.folder
+            elif self._stored_quarantine_raw is not None and str(self._stored_quarantine_raw).strip():
+                self._quarantine_missing = True
+        except Exception:
+            self._quarantine_folder = None
 
         self.setWindowTitle("Image Filter")
         self.resize(820, 560)
@@ -181,12 +242,56 @@ class MainWindow(QMainWindow):
         folder_row.addWidget(self.scan_button)
         folder_row.addWidget(self.cancel_button)
 
+        quarantine_heading = QLabel("Quarantine folder")
+        quarantine_heading.setObjectName("sectionHeading")
+        self.quarantine_label = QLabel()
+        self.quarantine_label.setObjectName("folderPath")
+        self.quarantine_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.quarantine_label.setWordWrap(True)
+        if self._quarantine_folder is not None:
+            self.quarantine_label.setText(str(self._quarantine_folder))
+        elif self._quarantine_missing and self._stored_quarantine_raw:
+            self.quarantine_label.setText(
+                f"{self._stored_quarantine_raw} is not available. Select a valid quarantine folder."
+            )
+        else:
+            self.quarantine_label.setText("No quarantine folder selected.")
+
+        self.select_quarantine_button = QPushButton("Select Quarantine Folder")
+        self.select_quarantine_button.setObjectName("secondaryButton")
+        self.select_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.select_quarantine_button.clicked.connect(self._choose_quarantine)
+
+        self.forget_quarantine_button = QPushButton("Forget Quarantine Folder")
+        self.forget_quarantine_button.setObjectName("secondaryButton")
+        self.forget_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.forget_quarantine_button.clicked.connect(self._forget_quarantine)
+
+        self.move_quarantine_button = QPushButton("Move Checked to Quarantine")
+        self.move_quarantine_button.setObjectName("primaryButton")
+        self.move_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.move_quarantine_button.setEnabled(False)
+        self.move_quarantine_button.clicked.connect(self._request_quarantine_move)
+
+        quarantine_row = QHBoxLayout()
+        quarantine_row.setSpacing(12)
+        quarantine_row.addWidget(self.quarantine_label, 1)
+        quarantine_row.addWidget(self.select_quarantine_button)
+        quarantine_row.addWidget(self.forget_quarantine_button)
+        quarantine_row.addWidget(self.move_quarantine_button)
+
+        self.move_log_label = QLabel("Move log: not written yet.")
+        self.move_log_label.setObjectName("model")
+        self.move_log_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.move_log_label.setWordWrap(True)
+
         self.status_label = QLabel("Select a folder to begin.")
         self.status_label.setObjectName("status")
 
         self.results_list = QListWidget()
         self.results_list.setObjectName("results")
         self.results_list.setAlternatingRowColors(True)
+        self.results_list.setIconSize(QSize(96, 96))
 
         content = QVBoxLayout()
         content.setContentsMargins(28, 24, 28, 28)
@@ -198,6 +303,10 @@ class MainWindow(QMainWindow):
         content.addSpacing(8)
         content.addWidget(folder_heading)
         content.addLayout(folder_row)
+        content.addSpacing(8)
+        content.addWidget(quarantine_heading)
+        content.addLayout(quarantine_row)
+        content.addWidget(self.move_log_label)
         content.addSpacing(6)
         content.addWidget(self.status_label)
         content.addWidget(self.results_list, 1)
@@ -216,7 +325,16 @@ class MainWindow(QMainWindow):
         self.test_connection_button.clicked.connect(self._test_connection)
         self.scan_button.clicked.connect(self._request_scan)
         self.cancel_button.clicked.connect(self._cancel_scan)
+        self.results_list.itemChanged.connect(lambda *_: self._update_controls())
         self._update_controls()
+
+    @staticmethod
+    def _default_run_quarantine(
+        candidates, source_root, quarantine_root, *, progress=None
+    ):
+        """Build and execute a verified quarantine plan in one background step."""
+        plan = build_quarantine_plan(source_root, quarantine_root, candidates)
+        return execute_quarantine_plan(plan, progress=progress)
 
     def _show_no_model(self) -> None:
         self.connection_label.setText("Test the server connection before scanning.")
@@ -232,6 +350,20 @@ class MainWindow(QMainWindow):
     def _update_controls(self) -> None:
         active = self._thread is not None
         ready = self._config is not None and bool(self._config.model)
+        quarantine_ready = (
+            self._quarantine_folder is not None and not self._quarantine_missing
+        )
+        move_roots_ready = False
+        if quarantine_ready and self._selected_folder is not None:
+            try:
+                validate_quarantine_roots(
+                    self._selected_folder,
+                    self._quarantine_folder,
+                )
+            except QuarantineError:
+                pass
+            else:
+                move_roots_ready = True
         self.select_button.setEnabled(not active)
         self.server_url_input.setEnabled(not active)
         self.test_connection_button.setEnabled(not active)
@@ -239,6 +371,20 @@ class MainWindow(QMainWindow):
             not active and self._selected_folder is not None and ready
         )
         self.cancel_button.setEnabled(active and self._operation_kind == "scan")
+        self.select_quarantine_button.setEnabled(not active)
+        self.forget_quarantine_button.setEnabled(not active and quarantine_ready)
+        self.move_quarantine_button.setEnabled(
+            not active
+            and move_roots_ready
+            and self._any_checked()
+        )
+
+    def _any_checked(self) -> bool:
+        for index in range(self.results_list.count()):
+            item = self.results_list.item(index)
+            if item.checkState() == Qt.CheckState.Checked:
+                return True
+        return False
 
     def _test_connection(self) -> None:
         if self._thread is not None:
@@ -303,9 +449,15 @@ class MainWindow(QMainWindow):
         return generation == self._generation and not self._closing
 
     def _operation_progress(self, generation: int, done: int, total: int) -> None:
-        if self._is_current(generation) and self._operation_kind == "scan":
+        if not self._is_current(generation):
+            return
+        if self._operation_kind == "scan":
             self.status_label.setText(
                 f"Scanning: {done} of {total} images processed."
+            )
+        elif self._operation_kind == "quarantine":
+            self.status_label.setText(
+                f"Moving: {done} of {total} files processed."
             )
 
     def _operation_succeeded(self, generation: int, result: Any) -> None:
@@ -339,6 +491,8 @@ class MainWindow(QMainWindow):
             self._finish_connection(result, error)
         elif kind == "scan":
             self._finish_scan(result, error)
+        elif kind == "quarantine":
+            self._finish_quarantine(result, error)
         self._update_controls()
 
     def _finish_connection(self, info: Any, error: Exception | None) -> None:
@@ -454,6 +608,14 @@ class MainWindow(QMainWindow):
                 f"{candidate.reason} | {confidence}%"
             )
             item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, candidate)
+            item.setToolTip(
+                f"{candidate.path}\n{candidate.category.replace('_', ' ')} "
+                f"({confidence}%)\n{candidate.reason}"
+            )
+            preview = QPixmap.fromImage(QImage.fromData(candidate.thumbnail_png))
+            if not preview.isNull():
+                item.setIcon(QIcon(preview))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             self.results_list.addItem(item)
@@ -500,6 +662,159 @@ class MainWindow(QMainWindow):
         self.results_list.clear()
         self.status_label.setText("Folder ready. Select Scan Folder to begin.")
         self._update_controls()
+
+    def _choose_quarantine(self) -> None:
+        if self._thread is not None:
+            return
+        starting_folder = (
+            str(self._quarantine_folder) if self._quarantine_folder is not None else ""
+        )
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select quarantine folder",
+            starting_folder,
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not selected:
+            return
+
+        folder = Path(selected)
+        try:
+            if self._selected_folder is not None:
+                validate_quarantine_roots(self._selected_folder, folder)
+            else:
+                validate_quarantine_folder(folder)
+        except QuarantineError as error:
+            QMessageBox.warning(self, "Quarantine folder", str(error))
+            return
+
+        self._quarantine_folder = folder
+        self._quarantine_missing = False
+        self.quarantine_label.setText(str(folder))
+        if not save_quarantine_folder(self._settings_store, folder):
+            QMessageBox.warning(
+                self,
+                "Quarantine folder",
+                "The quarantine folder could not be remembered.",
+            )
+        self._update_controls()
+
+    def _forget_quarantine(self) -> None:
+        if self._thread is not None:
+            return
+        try:
+            clear_quarantine_folder(self._settings_store)
+        except Exception:
+            pass
+        self._quarantine_folder = None
+        self._quarantine_missing = False
+        self.quarantine_label.setText("No quarantine folder selected.")
+        self._update_controls()
+
+    def _request_quarantine_move(self) -> None:
+        if (
+            self._thread is not None
+            or self._selected_folder is None
+            or self._quarantine_folder is None
+        ):
+            return
+        checked = [
+            self.results_list.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(self.results_list.count())
+            if self.results_list.item(index).checkState() == Qt.CheckState.Checked
+        ]
+        if not checked:
+            return
+
+        source_root = self._selected_folder
+        quarantine_root = self._quarantine_folder
+        try:
+            plan = build_quarantine_plan(source_root, quarantine_root, checked)
+        except QuarantineError as error:
+            QMessageBox.warning(self, "Quarantine", str(error))
+            return
+
+        paths = tuple(str(candidate.path) for candidate in checked)
+        folder = str(quarantine_root)
+        if self._confirm_quarantine is not None:
+            accepted = bool(self._confirm_quarantine(paths, folder))
+        else:
+            items = tuple(
+                (str(item.source), str(item.destination)) for item in plan.items
+            )
+            title, heading, detailed = _quarantine_confirm_parts(items, folder)
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle(title)
+            box.setText(heading)
+            box.setDetailedText(detailed)
+            move_button = box.addButton("Move", QMessageBox.ButtonRole.YesRole)
+            box.addButton(QMessageBox.StandardButton.No)
+            box.setDefaultButton(box.button(QMessageBox.StandardButton.No))
+            box.exec()
+            accepted = box.clickedButton() is move_button
+        if not accepted:
+            return
+
+        self.status_label.setText(
+            f"Moving: 0 of {len(checked)} files processed."
+        )
+
+        def operation(progress: Callable[[int, int], None]) -> QuarantineSummary:
+            return self._run_quarantine(
+                checked,
+                source_root,
+                quarantine_root,
+                progress=progress,
+            )
+
+        self._moving = True
+        self._start_operation("quarantine", operation)
+
+    def _finish_quarantine(self, summary: Any, error: Exception | None) -> None:
+        self._moving = False
+        if error is not None:
+            self.status_label.setText("The move could not be completed.")
+            return
+        if not isinstance(summary, QuarantineSummary):
+            self.status_label.setText("The move could not be completed.")
+            return
+
+        moved = set()
+        skipped = 0
+        for outcome in summary.outcomes:
+            if outcome.status is MoveStatus.MOVED:
+                moved.add(os.path.normcase(str(Path(outcome.source).resolve())))
+            else:
+                skipped += 1
+
+        for index in range(self.results_list.count() - 1, -1, -1):
+            item = self.results_list.item(index)
+            candidate = item.data(Qt.ItemDataRole.UserRole)
+            if candidate is not None and (
+                os.path.normcase(str(Path(candidate.path).resolve())) in moved
+            ):
+                self.results_list.takeItem(index)
+
+        total = len(summary.outcomes)
+        moved_count = summary.moved_count
+        if summary.state is QuarantineState.COMPLETED:
+            self.status_label.setText(
+                f"Moved {moved_count} of {total} checked files to quarantine."
+            )
+        elif summary.state is QuarantineState.COMPLETED_WITH_FAILURES:
+            self.status_label.setText(
+                f"Quarantine finished with failures: {moved_count} moved, "
+                f"{skipped} skipped."
+            )
+        else:
+            failed = summary.failed_count
+            conflicts = summary.conflict_count
+            self.status_label.setText(
+                f"No checked files could be moved: {failed} failed, "
+                f"{conflicts} conflicts."
+            )
+        self.move_log_label.setText(str(summary.quarantine_root / MOVE_LOG_NAME))
 
     def closeEvent(self, event: Any) -> None:
         self._closing = True

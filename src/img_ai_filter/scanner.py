@@ -21,7 +21,7 @@ class ScanResult:
     skipped_directories: tuple[Path, ...]
 
 
-def _is_windows_reparse_point(path: Path) -> bool:
+def is_windows_reparse_point(path: Path) -> bool:
     if os.name != "nt":
         return False
     try:
@@ -39,7 +39,7 @@ def scan_images(folder: PathInput) -> ScanResult:
     root = Path(folder)
     if not root.exists():
         raise ScanError(f"Selected path does not exist: {root}")
-    if root.is_symlink() or _is_windows_reparse_point(root) or not root.is_dir():
+    if root.is_symlink() or is_windows_reparse_point(root) or not root.is_dir():
         raise ScanError(f"Selected path is not a folder: {root}")
 
     images: list[Path] = []
@@ -55,7 +55,7 @@ def scan_images(folder: PathInput) -> ScanResult:
                         if entry.is_symlink():
                             continue
                         path = Path(entry.path)
-                        if _is_windows_reparse_point(path):
+                        if is_windows_reparse_point(path):
                             continue
                         if entry.is_dir(follow_symlinks=False):
                             pending.append(path)

@@ -8,7 +8,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
-from .image_payload import ImagePayloadError, prepare_image
+from .image_payload import ImagePayloadError, SourceIdentity, prepare_image
 from .scanner import ScanError, scan_images
 from .vision_client import VisionCancelled, VisionClientError, classify_image
 
@@ -26,6 +26,10 @@ class ScanCandidate:
     category: str
     reason: str
     confidence: float
+    identity: SourceIdentity
+    thumbnail_png: bytes
+    thumbnail_width: int
+    thumbnail_height: int
     checked: bool = field(default=False, init=False)
 
 
@@ -124,6 +128,10 @@ def run_server_scan(
                         decision.category,
                         decision.reason,
                         decision.confidence,
+                        prepared.identity,
+                        prepared.thumbnail_png,
+                        prepared.thumbnail_width,
+                        prepared.thumbnail_height,
                     )
                 )
         if progress is not None:

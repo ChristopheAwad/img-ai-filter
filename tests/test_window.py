@@ -12,13 +12,28 @@ def forbidden_scan(path: Path) -> ScanResult:
     raise AssertionError(f"Folder selection must not scan {path}")
 
 
+class _EmptyStore:
+    def read(self, key: str) -> None:
+        return None
+
+    def write(self, key: str, value: str) -> None:
+        return None
+
+    def delete(self, key: str) -> None:
+        return None
+
+
 READY_CONFIG = build_vision_endpoint_config(
     "http://192.168.0.239:5001/v1/", model="test-model"
 )
 
 
 def selection_window() -> MainWindow:
-    return MainWindow(scan=forbidden_scan, initial_config=READY_CONFIG)
+    return MainWindow(
+        scan=forbidden_scan,
+        initial_config=READY_CONFIG,
+        settings_store=_EmptyStore(),
+    )
 
 
 def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
@@ -205,12 +220,34 @@ def test_folder_selection_does_not_change_source_file(
     assert source.stat().st_mtime_ns == original_stat.st_mtime_ns
 
 
-def test_window_has_no_move_delete_or_quarantine_action(qtbot) -> None:
+def test_window_has_no_delete_action(qtbot) -> None:
     window = selection_window()
     qtbot.addWidget(window)
 
     button_text = " ".join(button.text().lower() for button in window.findChildren(QAbstractButton))
 
-    assert "move" not in button_text
     assert "delete" not in button_text
-    assert "quarantine" not in button_text
+
+
+def test_window_has_quarantine_controls_but_no_move_without_quarantine(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+
+    assert window.select_quarantine_button.text() == "Select Quarantine Folder"
+    assert window.move_quarantine_button.text() == "Move Checked to Quarantine"
+    assert window.forget_quarantine_button.text() == "Forget Quarantine Folder"
+    assert not window.move_quarantine_button.isEnabled()
+
+
+def test_quarantine_controls_are_in_the_visible_window(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+
+    assert window.quarantine_label.isVisible()
+    assert window.select_quarantine_button.isVisible()
+    assert window.forget_quarantine_button.isVisible()
+    assert window.move_quarantine_button.isVisible()
+    assert window.move_log_label.isVisible()

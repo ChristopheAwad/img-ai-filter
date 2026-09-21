@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 import configparser
 from dataclasses import dataclass
 from enum import Enum, auto
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from img_ai_filter.endpoint import (
     build_endpoint_config,
     build_vision_endpoint_config,
 )
+from img_ai_filter.scanner import is_windows_reparse_point
 
 ENDPOINT_URL_KEY = "endpoint_url"
 ENDPOINT_MODEL_KEY = "endpoint_model"
@@ -210,3 +212,61 @@ class IniSettingsStore:
         parser.remove_option(_SECTION, key)
         with open(self.path, "w", encoding="utf-8") as file:
             parser.write(file)
+
+
+QUARANTINE_FOLDER_KEY = "quarantine_folder"
+
+
+@dataclass(frozen=True, slots=True)
+class QuarantineFolderSettings:
+    """Loaded quarantine folder with its validation status."""
+
+    status: SettingsStatus
+    folder: Path | None
+
+
+def load_quarantine_folder(
+    store: Any,
+    *,
+    folder_check: Callable[[Path], bool] | None = None,
+) -> QuarantineFolderSettings:
+    """Load and validate the stored quarantine folder path."""
+    try:
+        raw = store.read(QUARANTINE_FOLDER_KEY)
+    except Exception:
+        return QuarantineFolderSettings(SettingsStatus.NEEDS_REPAIR, None)
+    if raw is None:
+        return QuarantineFolderSettings(SettingsStatus.UNCONFIGURED, None)
+    if not str(raw).strip():
+        return QuarantineFolderSettings(SettingsStatus.NEEDS_REPAIR, None)
+    folder = Path(str(raw).strip())
+    check = folder_check if folder_check is not None else _default_quarantine_folder_check
+    if not check(folder):
+        return QuarantineFolderSettings(SettingsStatus.NEEDS_REPAIR, None)
+    return QuarantineFolderSettings(SettingsStatus.READY, folder)
+
+
+def _default_quarantine_folder_check(folder: Path) -> bool:
+    """Reject unavailable or unsafe stored quarantine folders."""
+    try:
+        if folder.is_symlink() or is_windows_reparse_point(folder):
+            return False
+        return folder.is_dir() and os.access(
+            folder, os.R_OK | os.W_OK | os.X_OK
+        )
+    except OSError:
+        return False
+
+
+def save_quarantine_folder(store: Any, folder) -> bool:
+    """Persist the quarantine folder; report False if the store fails."""
+    try:
+        store.write(QUARANTINE_FOLDER_KEY, str(folder))
+    except Exception:
+        return False
+    return True
+
+
+def clear_quarantine_folder(store: Any) -> None:
+    """Remove the stored quarantine folder path."""
+    store.delete(QUARANTINE_FOLDER_KEY)

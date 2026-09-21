@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A privacy-conscious desktop app that finds screenshots and memes in user-selected image folders. With explicit consent, every supported image is sent to a user-managed KoboldCpp vision server on loopback or the private local network. Users review unchecked candidates before any later quarantine action.
+A privacy-conscious desktop app that finds screenshots and memes in user-selected image folders. With explicit consent, every supported image is sent to a user-managed KoboldCpp vision server on loopback or the private local network. Users review unchecked candidates with compact previews and may move the checked ones into a chosen quarantine folder.
 
 ## Core Workflow
 
@@ -14,8 +14,8 @@ A privacy-conscious desktop app that finds screenshots and memes in user-selecte
 6. The application shows only images flagged as likely screenshots, memes, or related trash candidates. Ordinary photos do not appear in the results.
 7. Every server candidate starts unchecked because no user-selected model has a validated checked-result threshold.
 8. If analysis fails or remains uncertain, the image is omitted and included in visible uncertain or failed-analysis counts.
-9. Each displayed result explains its source path, flagging reason, and confidence.
-10. The user reviews the candidates before any later quarantine action.
+9. Each displayed result explains its source path, flagging reason, and confidence, and shows a compact in-memory preview.
+10. The user reviews the candidates, checks exactly the ones to move, and reads each exact source and destination before any quarantine move starts.
 
 Selecting a different folder clears results from the prior folder and enables a new scan. Cancelling folder selection changes nothing. A completed or failed scan can be retried, and each new scan replaces prior results and review states.
 
@@ -39,16 +39,21 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Continue after per-image endpoint failures, omit failed items, and show uncertain and failed-analysis counts. Treat a total outage as a failed scan.
 - Keep scanning and connection tests off the GUI thread, support cancellation, and close active requests during shutdown.
 - Never move files without user confirmation.
+- Show a compact preview, maximum 96 by 96 pixels, beside every candidate and keep previews and thumbnails in memory only.
+- Move only explicitly checked candidates after showing every exact source and destination path and receiving confirmation.
+- Preserve the source-relative directory tree below the quarantine folder, never overwrite an existing destination, and verify that a source still matches the scanned file before it is removed.
+- Support quarantine folders on a different filesystem through a verified byte-for-byte copy followed by source removal.
+- Write a durable append-only JSON Lines move record in the quarantine folder explaining planned, moved, conflict, and failed outcomes.
+- Remember and revalidate the chosen quarantine folder; a missing or overlapping folder never enables a move.
 - Record review labels locally for future classifier evaluation.
-- The MVP only moves files to quarantine. It does not delete them.
+- The MVP only moves files to quarantine. It does not delete them, and it offers no automatic restoration.
 
 ## Deferred Decisions
 
 - Reconsider a packaged offline classifier only after the server-only MVP is useful and representative licensed evaluation data exists.
 - Reconsider authenticated-server GUI support if a real server requires it; the secure keyring adapter already exists.
-- Decide the quarantine folder layout and restoration workflow.
+- Add automatic restoration from quarantine and undo for completed move batches.
 - Add deletion, duplicate detection, image-quality detection, GIF, and HEIC support.
-- Add thumbnails after candidate detection and the candidate-only workflow work correctly.
 - Consider app-managed vision-server installation only after the user-managed LAN workflow is proven.
 - Consider public cloud vision endpoints separately; they are not part of the MVP.
 - Finalize installers, signing, and distribution for each operating system.

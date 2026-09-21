@@ -6,7 +6,7 @@ This roadmap divides the MVP into small, testable milestones. Each shipped miles
 
 ### F-001: Candidate Scan Workflow
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-20 (PR #5)
 - **Tier:** Tier 1, core product workflow
 - **Effort:** Medium after the KoboldCpp detector is available
 - **Planning files:** `project-brief.md`, `roadmap.md`, `feature.md`
@@ -97,7 +97,7 @@ Implementation order:
 
 ### F-003: KoboldCpp Vision Scan MVP
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-20 (PR #5)
 - **Tier:** Tier 1, core detection architecture
 - **Effort:** Medium
 - **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`, `evaluation/README.md`
@@ -106,8 +106,8 @@ Implementation order:
 - **Blocks:** completion of F-001 and the quarantine workflow
 
 Automated implementation and the live KoboldCpp desktop checklist are complete.
-The user approved the GUI behavior on 2026-09-19. The feature remains in
-progress until its pull request is merged.
+The user approved the GUI behavior on 2026-09-19, and PR #5 merged on
+2026-09-20.
 
 KoboldCpp runs the user-selected vision GGUF and matching `mmproj`. The app sends every supported image, one at a time, to a consented loopback or private-LAN OpenAI-compatible endpoint. It accepts only strict structured classifications, shows only screenshot/meme-style candidates, keeps every candidate unchecked, and never changes source files. The approved default base URL is `http://192.168.0.239:5001/v1/`, but it remains editable.
 
@@ -141,6 +141,83 @@ Implementation order:
 8. Run the complete automated suite with live networking blocked.
 9. Complete manual desktop verification against the user-managed KoboldCpp server before any Git operation.
 
+### F-004: Safe Quarantine Workflow
+
+- **Status:** shipped 2026-09-20 (PR #6)
+- **Tier:** Tier 1, core product workflow
+- **Effort:** Large because moving files safely requires path validation, change detection, no-overwrite behavior, verified cross-filesystem copies, durable records, partial-failure handling, background work, and cross-platform tests
+- **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`
+- **Likely implementation files:** quarantine planner/executor, settings, main window, platform integration, tests, and documentation
+- **Depends on:** shipped F-001 candidate review workflow and stable candidate identity from F-005 image preparation work
+- **Blocks:** restoration from quarantine and release-ready end-to-end workflow testing
+
+Move only explicitly checked candidates after showing their exact source and destination paths. Preserve the source-relative directory tree, reject source/quarantine overlap, never overwrite a destination, verify that each source still matches the scanned file, and support other filesystems through copy verification before source removal. Remember and revalidate the quarantine folder. Write a durable local JSON Lines move record. Keep failed or conflicting rows checked for review and retry.
+
+Dependency graph:
+
+```text
+F-001 candidate review shipped
+        |
+        v
+F-005 source identity contract
+        |
+        v
+F-004 quarantine planner and executor
+        |
+        v
+F-004 confirmation and background GUI workflow
+        |
+        v
+Milestone 4 shipped
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Add immutable source identity to prepared images and candidates through F-005.
+3. Write failing path, overlap, conflict, changed-file, log, copy, verification, cleanup, and partial-failure tests.
+4. Implement the GUI-neutral quarantine planner, verified executor, and move record.
+5. Write failing persisted-folder, confirmation, worker, progress, result-reconciliation, retry, and shutdown tests.
+6. Add quarantine selection and **Move Checked to Quarantine** without adding deletion or restore.
+7. Run the complete offline suite and artifact inspection.
+8. Complete manual desktop verification with disposable same-drive and cross-drive sample data.
+
+### F-005: Candidate Thumbnails
+
+- **Status:** shipped 2026-09-20 (PR #6)
+- **Tier:** Tier 1, review usability
+- **Effort:** Medium because previews must be bounded, EXIF-corrected, generated off the GUI thread, kept in memory, and integrated without weakening scan or file safety
+- **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`
+- **Likely implementation files:** image preparation, scan workflow contract, main window, tests, and documentation
+- **Depends on:** shipped F-003 bounded Pillow image preparation and F-001 candidate rows
+- **Blocks:** F-004 changed-file validation through the shared source identity contract
+
+Show a compact preview, approximately 96 by 96 pixels, beside every flagged candidate. Generate bounded PNG preview bytes during background image preparation, pass bytes only for candidates, and construct Qt pixmaps on the GUI thread. Keep path, category, reason, confidence, and unchecked review state visible. Never write thumbnail files or caches.
+
+Dependency graph:
+
+```text
+F-003 bounded image preparation shipped
+        |
+        v
+F-005 thumbnail and source identity tests
+        |
+        v
+F-005 scan contract and compact candidate rows
+        |
+        +------> F-004 safe changed-file validation
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Write failing digest, byte-count, format, orientation, dimensions, transparency, limit, failure, and source-immutability tests.
+3. Extend in-memory image preparation with source identity and bounded 96-pixel PNG previews.
+4. Write failing scan-contract and GUI tests.
+5. Pass preview bytes and identity only with candidates and render compact list icons.
+6. Verify responsive GUI behavior, placeholder behavior, rescans, stale-result protection, and shutdown.
+7. Run the complete offline suite and manual desktop checklist with F-004.
+
 ## Milestone 1: Desktop Foundation and Folder Scan
 
 **Status:** shipped 2026-09-19 (PR #1). Native folder-picker follow-up shipped 2026-09-19 (PR #2).
@@ -157,7 +234,7 @@ Success: A user can launch the app, select a folder, and see its supported image
 
 ## Milestone 2: Controlled Candidate Scan Workflow
 
-**Status:** in progress as F-001.
+**Status:** shipped 2026-09-20 (PR #5) as F-001 and F-003.
 
 - Keep source-folder selection separate from scanning.
 - Disable **Scan Folder** until a source folder is selected.
@@ -180,6 +257,8 @@ Success: A user explicitly starts a scan and reviews only explained trash candid
 
 ## Milestone 3: KoboldCpp Candidate Detection
 
+**Status:** shipped 2026-09-20 (PR #5) as F-003.
+
 This milestone is tracked as F-003 and supplies the detector required to complete F-001 and Milestone 2. F-002 remains as a scrapped historical record. The server-only MVP does not package or train a model.
 
 Evaluation infrastructure landed 2026-09-19: a strict result contract, manifest validation, dependency-free metrics, evaluation orchestration, and offline JSON/Markdown reports (`detection.py`, `evaluation.py`, `eval_cli.py`). The geometry baseline and private dataset validator remain available for future accuracy work, but do not block the experimental KoboldCpp MVP.
@@ -197,6 +276,8 @@ Evaluation infrastructure landed 2026-09-19: a strict result contract, manifest 
 Success: The app identifies likely screenshots and memes, explains each result, and leaves the final decision to the user.
 
 ## Milestone 4: Quarantine Workflow
+
+**Status:** shipped 2026-09-20 as F-004 and F-005 (PR #6).
 
 - Let the user select a quarantine folder.
 - Detect unsafe choices, including overlap with source folders.
