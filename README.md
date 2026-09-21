@@ -19,6 +19,17 @@ for consent. Public Internet endpoints and redirects are rejected. Every
 candidate starts unchecked. Failed and uncertain results are omitted and
 included in visible counts.
 
+The status line shows elapsed time during each approved scan and the final
+duration of scans and confirmed quarantine batches. **Activity History** shows
+the newest 100 scan and quarantine events across application launches. Scan
+records contain the UTC start time, source-folder path, model, outcome,
+duration, and aggregate image counts. Quarantine records contain the source and
+quarantine roots, duration, aggregate outcomes, and exact source and destination
+paths for each file. They do not contain the server address, image content,
+candidate reasons, credentials, or server responses. Use **Clear History** in
+that dialog to remove app history after confirmation. This does not remove the
+quarantine move-log files.
+
 The app tests KoboldCpp capabilities and discovers the first loaded model before
 it enables scanning. The base URL and discovered model are normal app settings.
 Completed protected credential support remains dormant because this MVP accepts
@@ -87,6 +98,8 @@ python -m img_ai_filter
 6. Optionally select **Select Quarantine Folder**, review the previews, check
    candidates, and choose **Move Checked to Quarantine** after reading the exact
    confirmation details.
+7. Select **Activity History** while the app is idle to inspect scan and
+   quarantine events or clear the saved app history.
 
 Selecting a folder does not search it, load images, or contact the server.
 **Scan Folder** is enabled only after a folder is selected and the connection

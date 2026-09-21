@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
+import pytest
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -20,8 +22,15 @@ from img_ai_filter.quarantine import (
     QuarantineSummary,
 )
 from img_ai_filter.scan_workflow import ScanCandidate, ScanState, ScanSummary
+from img_ai_filter.activity_history import (
+    SCAN_HISTORY_KEY,
+    QuarantineHistoryRecord,
+    ScanHistoryRecord,
+    append_activity_history,
+    load_activity_history,
+)
 from img_ai_filter.vision_connection import KoboldCppInfo, VisionConnectionError
-from img_ai_filter.window import DEFAULT_SERVER_URL, MainWindow
+from img_ai_filter.window import ActivityHistoryDialog, DEFAULT_SERVER_URL, MainWindow
 from img_ai_filter.settings import QUARANTINE_FOLDER_KEY
 
 
@@ -39,15 +48,26 @@ ONE_PIXEL_PNG = bytes.fromhex(
 class MemoryStore:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
+        self.write_error = False
+        self.delete_error = False
 
     def read(self, key: str) -> str | None:
         return self.values.get(key)
 
     def write(self, key: str, value: str) -> None:
+        if self.write_error:
+            raise OSError("private settings write failure")
         self.values[key] = value
 
     def delete(self, key: str) -> None:
+        if self.delete_error:
+            raise OSError("private settings delete failure")
         self.values.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def isolate_platform_settings(monkeypatch):
+    monkeypatch.setattr(window_module, "_QSettingsStore", MemoryStore)
 
 
 def _identity(data: bytes) -> SourceIdentity:
@@ -309,7 +329,8 @@ def test_accepting_consent_runs_background_scan_and_shows_exact_summary(
 
     assert window.status_label.text() == (
         "Completed with skips: 5 discovered, 4 analyzed, 0 candidates, "
-        "1 ordinary, 1 uncertain, 1 failed, 1 unreadable folder."
+        "1 ordinary, 1 uncertain, 1 failed, 1 unreadable folder. "
+        "Elapsed: <1 sec."
     )
     assert not window.cancel_button.isEnabled()
 
@@ -380,7 +401,7 @@ def test_candidate_rows_include_details_and_start_unchecked(
     assert item.checkState() == Qt.CheckState.Unchecked
     assert window.status_label.text() == (
         "Completed: 3 discovered, 3 analyzed, 1 candidate, 1 ordinary, "
-        "1 uncertain, 0 failed, 0 unreadable folders."
+        "1 uncertain, 0 failed, 0 unreadable folders. Elapsed: <1 sec."
     )
 
 
@@ -428,6 +449,8 @@ def test_cancel_closes_active_transport_and_allows_retry(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
     transport = FakeTransport()
+    store = MemoryStore()
+    clock = [10.0]
     entered = Event()
 
     def run_scan(folder, config, received_transport, **kwargs):
@@ -439,9 +462,12 @@ def test_cancel_closes_active_transport_and_allows_retry(
 
     window = MainWindow(
         initial_config=READY_CONFIG,
+        settings_store=store,
         transport_factory=lambda: transport,
         run_scan=run_scan,
         confirm_transfer=lambda *_: True,
+        monotonic=lambda: clock[0],
+        utc_now=lambda: datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
     )
     qtbot.addWidget(window)
     _select(window, monkeypatch, tmp_path)
@@ -449,13 +475,13 @@ def test_cancel_closes_active_transport_and_allows_retry(
     qtbot.waitUntil(entered.is_set)
 
     window.cancel_button.click()
-    assert window.status_label.text() == "Cancelling scan..."
+    assert window.status_label.text() == "Cancelling scan... Elapsed: <1 sec."
     qtbot.waitUntil(lambda: window.scan_button.isEnabled())
 
     assert transport.cancel_calls == 1
     assert window.status_label.text() == (
         "Cancelled: 2 discovered, 0 analyzed, 0 candidates, 0 ordinary, "
-        "0 uncertain, 0 failed, 0 unreadable folders."
+        "0 uncertain, 0 failed, 0 unreadable folders. Elapsed: <1 sec."
     )
 
 
@@ -482,7 +508,9 @@ def test_total_failure_and_worker_exception_are_safe_and_retryable(
 
     window.scan_button.click()
     qtbot.waitUntil(lambda: window.scan_button.isEnabled())
-    assert window.status_label.text() == "The scan could not be completed."
+    assert window.status_label.text() == (
+        "The scan could not be completed. Elapsed: <1 sec."
+    )
     assert private not in window.status_label.text()
 
     window.scan_button.click()
@@ -495,6 +523,8 @@ def test_close_during_scan_cancels_transport_and_stops_worker(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
     transport = FakeTransport()
+    store = MemoryStore()
+    clock = [10.0]
     entered = Event()
     deleted = []
     monkeypatch.setattr(
@@ -510,20 +540,29 @@ def test_close_during_scan_cancels_transport_and_stops_worker(
 
     window = MainWindow(
         initial_config=READY_CONFIG,
+        settings_store=store,
         transport_factory=lambda: transport,
         run_scan=run_scan,
         confirm_transfer=lambda *_: True,
+        monotonic=lambda: clock[0],
+        utc_now=lambda: datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
     )
     qtbot.addWidget(window)
     _select(window, monkeypatch, tmp_path)
     window.scan_button.click()
     qtbot.waitUntil(entered.is_set)
 
+    clock[0] = 12.0
     window.close()
     qtbot.waitUntil(lambda: len(deleted) == 1)
 
     assert transport.cancel_calls == 1
     assert window._thread is None or not window._thread.isRunning()
+    records = load_activity_history(store)
+    assert len(records) == 1
+    assert records[0].outcome == "cancelled"
+    assert records[0].duration_ms == 2000
+    assert records[0].discovered is None
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +908,16 @@ def test_accepting_confirmation_runs_checked_move_and_reports_summary(
     assert runs[0][2] == quarantine
     assert window.move_log_label.text() == str(quarantine / MOVE_LOG_NAME)
     assert not window.cancel_button.isEnabled()
+    assert window.status_label.text().endswith("Elapsed: <1 sec.")
+    record = load_activity_history(window._settings_store)[-1]
+    assert isinstance(record, QuarantineHistoryRecord)
+    assert record.source_folder == str(source_dir.resolve())
+    assert record.quarantine_folder == str(quarantine)
+    assert record.outcome == "completed"
+    assert (record.moved, record.conflicts, record.failed) == (1, 0, 0)
+    assert record.files[0].source == str(source_file)
+    assert record.files[0].destination == str(quarantine / "shot.png")
+    assert record.files[0].status == "moved"
 
 
 def test_partial_failure_reports_moved_and_skipped_counts(
@@ -1116,6 +1165,75 @@ def test_close_during_quarantine_waits_for_move_then_closes(
     assert (quarantine / "shot.png").exists() is False
 
 
+def test_close_timeout_and_repeated_close_record_quarantine_once(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    entered = Event()
+    release = Event()
+    store = MemoryStore()
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        entered.set()
+        release.wait(2)
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(
+                    source_file,
+                    quarantine / "shot.png",
+                    MoveStatus.MOVED,
+                    "",
+                ),
+            ),
+            QuarantineState.COMPLETED,
+        )
+
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    window._settings_store = store
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(entered.is_set)
+    thread = window._thread
+    assert thread is not None
+    monkeypatch.setattr(thread, "wait", lambda *args: False)
+
+    class CloseEvent:
+        def __init__(self) -> None:
+            self.accepted = False
+            self.ignored = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    first = CloseEvent()
+    second = CloseEvent()
+    window.closeEvent(first)
+    window.closeEvent(second)
+
+    assert first.ignored and second.ignored
+    assert load_activity_history(store) == ()
+
+    release.set()
+    qtbot.waitUntil(lambda: window._thread is None)
+    records = load_activity_history(store)
+    assert len(records) == 1
+    assert isinstance(records[0], QuarantineHistoryRecord)
+    assert records[0].outcome == "completed"
+    assert records[0].moved == 1
+
+
 def test_candidate_rows_store_candidate_and_thumbnail_icon(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
@@ -1153,3 +1271,315 @@ def test_invalid_thumbnail_bytes_do_not_break_rows(
 
     assert item.icon().isNull()
     assert str(source_file) in item.text()
+
+
+def test_scan_live_elapsed_status_and_completed_history_record(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+    clock = [10.0]
+    entered = Event()
+    send_progress = Event()
+    release = Event()
+
+    def run_scan(folder, config, transport, **kwargs):
+        entered.set()
+        send_progress.wait(2)
+        kwargs["progress"](2, 4)
+        release.wait(2)
+        return _summary(
+            discovered=4,
+            analyzed=4,
+            ordinary=3,
+            uncertain=0,
+            failed=0,
+        )
+
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        settings_store=store,
+        transport_factory=FakeTransport,
+        run_scan=run_scan,
+        confirm_transfer=lambda *_: True,
+        monotonic=lambda: clock[0],
+        utc_now=lambda: datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(entered.is_set)
+    assert window.status_label.text() == (
+        "Scanning: preparing the image list. Elapsed: <1 sec."
+    )
+    assert not window.activity_history_button.isEnabled()
+
+    clock[0] = 11.5
+    window._scan_timer.timeout.emit()
+    assert window.status_label.text().endswith("Elapsed: 1 sec.")
+
+    send_progress.set()
+    qtbot.waitUntil(lambda: "2 of 4 images" in window.status_label.text())
+    assert window.status_label.text() == (
+        "Scanning: 2 of 4 images processed. Elapsed: 1 sec."
+    )
+
+    clock[0] = 12.4
+    release.set()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+    assert window.status_label.text().endswith("Elapsed: 2 sec.")
+    assert window.activity_history_button.isEnabled()
+    assert load_activity_history(store) == (
+        ScanHistoryRecord(
+            started_at_utc="2026-09-20T12:00:00Z",
+            source_folder=str(tmp_path),
+            model="vision-model",
+            outcome="completed",
+            duration_ms=2400,
+            discovered=4,
+            analyzed=4,
+            candidates=0,
+            ordinary=3,
+            uncertain=0,
+            failed=0,
+            skipped_directories=0,
+        ),
+    )
+
+
+def test_declined_consent_creates_no_history_or_timer(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+    clock_calls = []
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        settings_store=store,
+        confirm_transfer=lambda *_: False,
+        monotonic=lambda: clock_calls.append(True) or 1.0,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+
+    assert clock_calls == []
+    assert SCAN_HISTORY_KEY not in store.values
+    assert not window._scan_timer.isActive()
+
+
+def test_clock_failure_does_not_prevent_scan_or_history(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+
+    def unavailable_clock():
+        raise RuntimeError("private clock failure")
+
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        settings_store=store,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(
+            discovered=1, analyzed=1, ordinary=1
+        ),
+        confirm_transfer=lambda *_: True,
+        monotonic=unavailable_clock,
+        utc_now=unavailable_clock,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+    assert window.status_label.text().endswith("Elapsed: <1 sec.")
+    assert "private clock" not in window.status_label.text()
+    records = load_activity_history(store)
+    assert len(records) == 1
+    assert records[0].duration_ms == 0
+    assert records[0].outcome == "completed"
+
+
+def test_cancelled_scan_and_retry_create_separate_history_records(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+    clock = [1.0]
+    attempts = 0
+    release_retry = Event()
+
+    def run_scan(folder, config, transport, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            kwargs["cancel_event"].wait(2)
+            return _summary(ScanState.CANCELLED, discovered=2)
+        release_retry.wait(2)
+        return _summary(discovered=1, analyzed=1, ordinary=1)
+
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        settings_store=store,
+        transport_factory=FakeTransport,
+        run_scan=run_scan,
+        confirm_transfer=lambda *_: True,
+        monotonic=lambda: clock[0],
+        utc_now=lambda: datetime(2026, 9, 20, 12, attempts, tzinfo=timezone.utc),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.cancel_button.isEnabled())
+    clock[0] = 3.0
+    window.cancel_button.click()
+    assert window.status_label.text() == "Cancelling scan... Elapsed: 2 sec."
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+    clock[0] = 10.0
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: attempts == 2)
+    clock[0] = 11.0
+    release_retry.set()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+    records = load_activity_history(store)
+    assert [record.outcome for record in records] == ["cancelled", "completed"]
+    assert [record.duration_ms for record in records] == [2000, 1000]
+
+
+def test_scan_history_write_failure_preserves_results_and_reports_safe_warning(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+    store.write_error = True
+    candidate_path = tmp_path / "candidate.png"
+    candidate_path.write_bytes(b"image")
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        settings_store=store,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(
+            candidates=(_candidate(candidate_path),), discovered=1, analyzed=1
+        ),
+        confirm_transfer=lambda *_: True,
+        monotonic=lambda: 5.0,
+        utc_now=lambda: datetime(2026, 9, 20, tzinfo=timezone.utc),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.results_list.count() == 1)
+
+    assert window.scan_button.isEnabled()
+    assert window.status_label.text().endswith(
+        "Elapsed: <1 sec. Activity history could not be saved."
+    )
+    assert "private settings" not in window.status_label.text()
+
+
+def test_history_dialog_shows_newest_first_and_clears_after_confirmation(
+    qtbot, monkeypatch
+) -> None:
+    store = MemoryStore()
+    older = ScanHistoryRecord(
+        "2026-09-20T10:00:00Z", "/older", "model-a", "completed", 1000,
+        2, 2, 1, 1, 0, 0, 0,
+    )
+    newer = ScanHistoryRecord(
+        "2026-09-20T11:00:00Z", "/newer", "model-b", "cancelled", 61000,
+        None, None, None, None, None, None, None,
+    )
+    assert append_activity_history(store, older)
+    assert append_activity_history(store, newer)
+    dialog = ActivityHistoryDialog(store)
+    qtbot.addWidget(dialog)
+
+    assert dialog.windowTitle() == "Activity History"
+    assert "Scan source folders and model names" in dialog.disclosure_label.text()
+    assert dialog.tree.columnCount() == 7
+    assert [
+        dialog.tree.headerItem().text(index) for index in range(7)
+    ] == ["Type", "Started (UTC)", "Source", "Model / Destination", "Result", "Duration", "Counts / Message"]
+    assert dialog.tree.topLevelItemCount() == 2
+    assert dialog.tree.topLevelItem(0).text(2) == "/newer"
+    assert dialog.tree.topLevelItem(0).text(4) == "Cancelled"
+    assert dialog.tree.topLevelItem(0).text(5) == "1 min 1 sec"
+    assert dialog.tree.topLevelItem(0).text(6) == "Counts unavailable"
+    assert not dialog.empty_label.isVisible()
+    assert dialog.clear_button.isEnabled()
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args: QMessageBox.StandardButton.Yes,
+    )
+    dialog.clear_button.click()
+
+    assert load_activity_history(store) == ()
+    assert dialog.tree.topLevelItemCount() == 0
+    assert not dialog.clear_button.isEnabled()
+    assert not dialog.empty_label.isHidden()
+
+
+def test_activity_history_dialog_shows_quarantine_children(qtbot) -> None:
+    store = MemoryStore()
+    record = QuarantineHistoryRecord(
+        "2026-09-20T12:00:00Z", "/source", "/quarantine", "batch-1",
+        "completed_with_failures", 2500, 1, 1, 0,
+        (
+            window_module.QuarantineFileHistory(
+                "/source/a.png", "/quarantine/a.png", "moved", ""
+            ),
+            window_module.QuarantineFileHistory(
+                "/source/b.png", "/quarantine/b.png", "conflict", "Destination exists."
+            ),
+        ),
+    )
+    assert append_activity_history(store, record)
+    dialog = ActivityHistoryDialog(store)
+    qtbot.addWidget(dialog)
+
+    parent = dialog.tree.topLevelItem(0)
+    assert [parent.text(index) for index in range(7)] == [
+        "Quarantine", "2026-09-20T12:00:00Z", "/source", "/quarantine",
+        "Completed with failures", "2 sec", "1 moved, 1 conflict, 0 failed",
+    ]
+    assert parent.childCount() == 2
+    assert [parent.child(1).text(index) for index in range(7)] == [
+        "File", "", "/source/b.png", "/quarantine/b.png", "Conflict", "",
+        "Destination exists.",
+    ]
+
+
+def test_history_dialog_clear_failure_retains_rows_and_hides_private_error(
+    qtbot, monkeypatch
+) -> None:
+    store = MemoryStore()
+    assert append_activity_history(store, ScanHistoryRecord(
+        "2026-09-20T10:00:00Z", "/source", "model", "failed", 0,
+        None, None, None, None, None, None, None,
+    ))
+    store.delete_error = True
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args: warnings.append(args[2]),
+    )
+    dialog = ActivityHistoryDialog(store)
+    qtbot.addWidget(dialog)
+
+    dialog.clear_button.click()
+
+    assert dialog.tree.topLevelItemCount() == 1
+    assert warnings == ["Activity history could not be cleared."]
+    assert "private" not in warnings[0]

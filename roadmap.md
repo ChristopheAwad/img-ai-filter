@@ -218,6 +218,49 @@ Implementation order:
 6. Verify responsive GUI behavior, placeholder behavior, rescans, stale-result protection, and shutdown.
 7. Run the complete offline suite and manual desktop checklist with F-004.
 
+### F-006: Scan Timing and Activity History
+
+- **Status:** shipped 2026-09-21 (PR #7)
+- **Tier:** Tier 2, workflow visibility and local records
+- **Effort:** Medium because complete attempt timing must cover discovery, live progress, cancellation, worker failures, safe shutdown, durable bounded history, corruption recovery, and a testable Qt dialog
+- **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`
+- **Likely implementation files:** activity-history model and persistence, main-window timing and dialog integration, worker result retention, tests, and documentation
+- **Depends on:** shipped F-001/F-003 background candidate scan workflow and the existing injected settings store
+- **Blocks:** none; it provides performance evidence useful during Milestone 6 release-readiness testing
+
+Measure every scan attempt accepted after transfer consent and every confirmed quarantine batch. Show a live scan timer and final scan or quarantine duration. Store the newest 100 combined local events. Scan events contain aggregate counts but no image-level content. Quarantine events contain exact source and destination paths with safe per-file outcomes. Do not store endpoint addresses, credentials, image bytes, or raw exceptions. Provide an expandable in-app activity dialog and an explicitly confirmed clear action that leaves quarantine move logs unchanged.
+
+Dependency graph:
+
+```text
+F-001/F-003 background scan workflow
+                |
+                v
+F-006 deterministic attempt timing
+                |
+                v
+F-006 bounded local history storage
+                |
+                v
+F-006 history dialog and clear action
+                |
+                v
+Milestone 6 performance evidence
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Record the full offline regression baseline.
+3. Write failing duration-format, schema, corruption, retention, persistence-failure, clear, and privacy tests.
+4. Implement the GUI-neutral versioned history module over the existing injected settings-store boundary.
+5. Write failing live-timer, terminal-state, retry, worker-failure, cancellation, and close tests with injected clocks.
+6. Add exact-once scan-attempt timing and history recording without changing `ScanSummary`.
+7. Write failing history-dialog and confirmed-clear tests.
+8. Add the idle-only history dialog, newest-first records, empty state, and clear action.
+9. Run the complete network-blocked suite and inspect privacy and generated artifacts.
+10. Complete manual desktop verification before any Git operation.
+
 ## Milestone 1: Desktop Foundation and Folder Scan
 
 **Status:** shipped 2026-09-19 (PR #1). Native folder-picker follow-up shipped 2026-09-19 (PR #2).

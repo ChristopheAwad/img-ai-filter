@@ -1,16 +1,21 @@
 """Main desktop window."""
 
 from collections.abc import Callable, Iterable
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from threading import Event
+import time
 from typing import Any
 
 from PySide6.QtCore import QSettings, QSize, QThread, QTimer, Qt
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
+    QAbstractItemView,
+    QDialog,
     QFrame,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,6 +24,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +48,15 @@ from img_ai_filter.quarantine import (
     validate_quarantine_roots,
 )
 from img_ai_filter.scan_worker import OperationThread
+from img_ai_filter.activity_history import (
+    QuarantineFileHistory,
+    QuarantineHistoryRecord,
+    ScanHistoryRecord,
+    append_activity_history,
+    clear_activity_history,
+    format_duration,
+    load_activity_history,
+)
 from img_ai_filter.scan_workflow import (
     ScanCandidate,
     ScanState,
@@ -99,6 +115,118 @@ class _QSettingsStore:
         self._settings.remove(key)
 
 
+class ActivityHistoryDialog(QDialog):
+    """Display locally saved scan and quarantine activity."""
+
+    _COLUMNS = (
+        "Type",
+        "Started (UTC)",
+        "Source",
+        "Model / Destination",
+        "Result",
+        "Duration",
+        "Counts / Message",
+    )
+    _RESULTS = {
+        "completed": "Completed",
+        "completed_with_skips": "Completed with skips",
+        "cancelled": "Cancelled",
+        "failed": "Failed",
+    }
+
+    def __init__(self, store: Any, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._store = store
+        self.setWindowTitle("Activity History")
+        self.resize(1050, 460)
+
+        self.disclosure_label = QLabel(
+            "Saved locally. Scan source folders and model names are included. "
+            "Quarantine records include exact source and destination file paths."
+        )
+        self.disclosure_label.setWordWrap(True)
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(len(self._COLUMNS))
+        self.tree.setHeaderLabels(self._COLUMNS)
+        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.tree.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.empty_label = QLabel("No activity history has been saved.")
+
+        self.clear_button = QPushButton("Clear History")
+        close_button = QPushButton("Close")
+        self.clear_button.clicked.connect(self._clear_history)
+        close_button.clicked.connect(self.accept)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.clear_button)
+        buttons.addStretch(1)
+        buttons.addWidget(close_button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.disclosure_label)
+        layout.addWidget(self.empty_label)
+        layout.addWidget(self.tree, 1)
+        layout.addLayout(buttons)
+        self.reload()
+
+    def reload(self) -> None:
+        records = tuple(reversed(load_activity_history(self._store)))
+        self.tree.clear()
+        for record in records:
+            if isinstance(record, ScanHistoryRecord):
+                counts = "Counts unavailable"
+                if record.discovered is not None:
+                    counts = (
+                        f"{record.discovered} discovered, {record.analyzed} analyzed, "
+                        f"{record.candidates} candidates, {record.ordinary} ordinary, "
+                        f"{record.uncertain} uncertain, {record.failed} failed, "
+                        f"{record.skipped_directories} unreadable folders"
+                    )
+                values = ("Scan", record.started_at_utc, record.source_folder,
+                          record.model, self._RESULTS[record.outcome],
+                          format_duration(record.duration_ms), counts)
+                self.tree.addTopLevelItem(QTreeWidgetItem(values))
+                continue
+            counts = "Counts unavailable" if record.moved is None else (
+                f"{record.moved} moved, {record.conflicts} "
+                f"{'conflict' if record.conflicts == 1 else 'conflicts'}, "
+                f"{record.failed} failed"
+            )
+            results = {"completed": "Completed", "completed_with_failures": "Completed with failures", "failed": "Failed"}
+            parent = QTreeWidgetItem(("Quarantine", record.started_at_utc,
+                record.source_folder, record.quarantine_folder, results[record.outcome],
+                format_duration(record.duration_ms), counts))
+            child_results = {"moved": "Moved", "conflict": "Conflict", "failed": "Failed", "unknown": "Unknown"}
+            for item in record.files:
+                parent.addChild(QTreeWidgetItem(("File", "", item.source,
+                    item.destination, child_results[item.status], "", item.message)))
+            self.tree.addTopLevelItem(parent)
+        present = bool(records)
+        self.empty_label.setVisible(not present)
+        self.tree.setVisible(present)
+        self.clear_button.setEnabled(present)
+
+    def _clear_history(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Clear activity history?",
+            "All saved app history will be removed. Quarantine move-log files will remain.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if clear_activity_history(self._store):
+            self.reload()
+        else:
+            QMessageBox.warning(
+                self, "Activity History", "Activity history could not be cleared."
+            )
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -113,6 +241,8 @@ class MainWindow(QMainWindow):
         confirm_transfer: Callable[[str, bool], bool] | None = None,
         initial_config: VisionEndpointConfig | None = None,
         resolver: Callable[..., Any] | None = None,
+        monotonic: Callable[[], float] = time.perf_counter,
+        utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         super().__init__()
         self._scan = scan
@@ -126,6 +256,8 @@ class MainWindow(QMainWindow):
         self._confirm_quarantine = confirm_quarantine
         self._confirm_transfer = confirm_transfer
         self._resolver = resolver
+        self._monotonic = monotonic
+        self._utc_now = utc_now
         self._selected_folder: Path | None = None
         self._results_folder: Path | None = None
         self._quarantine_folder: Path | None = None
@@ -141,6 +273,24 @@ class MainWindow(QMainWindow):
         self._operation_error: Exception | None = None
         self._generation = 0
         self._closing = False
+        self._scan_started_monotonic: float | None = None
+        self._scan_started_at_utc: str | None = None
+        self._scan_source_folder: str | None = None
+        self._scan_model: str | None = None
+        self._scan_recorded = False
+        self._scan_phase = "preparing"
+        self._scan_progress: tuple[int, int] | None = None
+        self._scan_generation: int | None = None
+        self._quarantine_started_monotonic: float | None = None
+        self._quarantine_started_at_utc: str | None = None
+        self._quarantine_source_folder: str | None = None
+        self._quarantine_folder_snapshot: str | None = None
+        self._quarantine_batch_id: str | None = None
+        self._quarantine_items: tuple[tuple[str, str], ...] = ()
+        self._quarantine_recorded = False
+        self._scan_timer = QTimer(self)
+        self._scan_timer.setInterval(1000)
+        self._scan_timer.timeout.connect(self._render_live_scan_status)
 
         server_url = DEFAULT_SERVER_URL
         if initial_config is not None:
@@ -235,12 +385,18 @@ class MainWindow(QMainWindow):
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.setEnabled(False)
 
+        self.activity_history_button = QPushButton("Activity History")
+        self.activity_history_button.setObjectName("secondaryButton")
+        self.activity_history_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.activity_history_button.clicked.connect(self._show_activity_history)
+
         folder_row = QHBoxLayout()
         folder_row.setSpacing(16)
         folder_row.addWidget(self.folder_label, 1)
         folder_row.addWidget(self.select_button)
         folder_row.addWidget(self.scan_button)
         folder_row.addWidget(self.cancel_button)
+        folder_row.addWidget(self.activity_history_button)
 
         quarantine_heading = QLabel("Quarantine folder")
         quarantine_heading.setObjectName("sectionHeading")
@@ -378,6 +534,7 @@ class MainWindow(QMainWindow):
             and move_roots_ready
             and self._any_checked()
         )
+        self.activity_history_button.setEnabled(not active)
 
     def _any_checked(self) -> bool:
         for index in range(self.results_list.count()):
@@ -452,9 +609,9 @@ class MainWindow(QMainWindow):
         if not self._is_current(generation):
             return
         if self._operation_kind == "scan":
-            self.status_label.setText(
-                f"Scanning: {done} of {total} images processed."
-            )
+            self._scan_phase = "progress"
+            self._scan_progress = (done, total)
+            self._render_live_scan_status()
         elif self._operation_kind == "quarantine":
             self.status_label.setText(
                 f"Moving: {done} of {total} files processed."
@@ -484,6 +641,8 @@ class MainWindow(QMainWindow):
         self._operation_result = None
         self._operation_error = None
         if not current:
+            if self._closing and kind == "quarantine":
+                self._record_quarantine(thread.result, thread.error)
             if self._closing:
                 QTimer.singleShot(0, self.close)
             return
@@ -559,11 +718,29 @@ class MainWindow(QMainWindow):
 
         folder = self._selected_folder
         config = self._config
+        try:
+            self._scan_started_monotonic = self._monotonic()
+        except Exception:
+            self._scan_started_monotonic = None
+        try:
+            started_at = self._utc_now()
+            if not isinstance(started_at, datetime):
+                raise TypeError("The UTC clock must return a datetime")
+        except Exception:
+            started_at = datetime.now(timezone.utc)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        self._scan_started_at_utc = (
+            started_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
+        self._scan_source_folder = str(folder)
+        self._scan_model = config.model
+        self._scan_recorded = False
+        self._scan_phase = "preparing"
+        self._scan_progress = None
         cancel_event = Event()
         self._cancel_event = cancel_event
         self.results_list.clear()
-        self.status_label.setText("Scanning: preparing the image list.")
-
         def operation(progress: Callable[[int, int], None]) -> ScanSummary:
             transport = self._transport_factory()
             self._active_transport = transport
@@ -577,6 +754,9 @@ class MainWindow(QMainWindow):
             )
 
         self._start_operation("scan", operation)
+        self._scan_generation = self._generation
+        self._render_live_scan_status()
+        self._scan_timer.start()
 
     def _cancel_scan(self) -> None:
         if self._thread is None or self._operation_kind != "scan":
@@ -587,18 +767,23 @@ class MainWindow(QMainWindow):
         cancel_active = getattr(transport, "cancel_active", None)
         if callable(cancel_active):
             cancel_active()
-        self.status_label.setText("Cancelling scan...")
+        self._scan_phase = "cancelling"
+        self._render_live_scan_status()
 
     def _finish_scan(self, summary: Any, error: Exception | None) -> None:
+        duration_ms, saved = self._record_scan(summary, error)
         self.results_list.clear()
         if error is not None:
             if isinstance(error, ScanError):
-                self.status_label.setText(str(error))
+                status = str(error)
             else:
-                self.status_label.setText("The scan could not be completed.")
+                status = "The scan could not be completed."
+            self.status_label.setText(self._final_scan_status(status, duration_ms, saved))
             return
         if not isinstance(summary, ScanSummary):
-            self.status_label.setText("The scan could not be completed.")
+            self.status_label.setText(self._final_scan_status(
+                "The scan could not be completed.", duration_ms, saved
+            ))
             return
 
         for candidate in summary.candidates:
@@ -619,7 +804,96 @@ class MainWindow(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             self.results_list.addItem(item)
-        self.status_label.setText(self._summary_text(summary))
+        self.status_label.setText(
+            self._final_scan_status(self._summary_text(summary), duration_ms, saved)
+        )
+
+    def _elapsed_ms(self) -> int:
+        if self._scan_started_monotonic is None:
+            return 0
+        try:
+            return max(0, int((self._monotonic() - self._scan_started_monotonic) * 1000))
+        except Exception:
+            return 0
+
+    def _render_live_scan_status(self) -> None:
+        if (
+            self._thread is None
+            or self._operation_kind != "scan"
+            or self._scan_generation != self._generation
+        ):
+            return
+        elapsed = format_duration(self._elapsed_ms())
+        if self._scan_phase == "cancelling":
+            text = "Cancelling scan..."
+        elif self._scan_phase == "progress" and self._scan_progress is not None:
+            done, total = self._scan_progress
+            text = f"Scanning: {done} of {total} images processed."
+        else:
+            text = "Scanning: preparing the image list."
+        self.status_label.setText(f"{text} Elapsed: {elapsed}.")
+
+    def _record_scan(
+        self,
+        summary: Any,
+        error: Exception | None,
+        *,
+        forced_outcome: str | None = None,
+    ) -> tuple[int, bool]:
+        self._scan_timer.stop()
+        duration_ms = self._elapsed_ms()
+        if self._scan_recorded:
+            return duration_ms, True
+        self._scan_recorded = True
+        valid_summary = error is None and isinstance(summary, ScanSummary)
+        outcomes = {
+            ScanState.COMPLETED: "completed",
+            ScanState.COMPLETED_WITH_SKIPS: "completed_with_skips",
+            ScanState.CANCELLED: "cancelled",
+            ScanState.FAILED: "failed",
+        }
+        outcome = (
+            forced_outcome
+            or (outcomes.get(summary.state, "failed") if valid_summary else "failed")
+        )
+        counts = (
+            (
+                summary.discovered,
+                summary.analyzed,
+                summary.candidate_count,
+                summary.ordinary,
+                summary.uncertain,
+                summary.failed,
+                summary.skipped_directories,
+            )
+            if valid_summary
+            else (None,) * 7
+        )
+        try:
+            record = ScanHistoryRecord(
+                self._scan_started_at_utc or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                self._scan_source_folder or str(Path.cwd()),
+                self._scan_model or "Unknown",
+                outcome,
+                duration_ms,
+                *counts,
+            )
+            saved = append_activity_history(self._settings_store, record)
+        except Exception:
+            saved = False
+        return duration_ms, saved
+
+    @staticmethod
+    def _final_scan_status(status: str, duration_ms: int, saved: bool) -> str:
+        result = f"{status} Elapsed: {format_duration(duration_ms)}."
+        if not saved:
+            result += " Activity history could not be saved."
+        return result
+
+    def _show_activity_history(self) -> None:
+        if self._thread is not None:
+            return
+        ActivityHistoryDialog(self._settings_store, self).exec()
 
     @staticmethod
     def _summary_text(summary: ScanSummary) -> str:
@@ -756,6 +1030,27 @@ class MainWindow(QMainWindow):
         if not accepted:
             return
 
+        try:
+            self._quarantine_started_monotonic = self._monotonic()
+        except Exception:
+            self._quarantine_started_monotonic = None
+        try:
+            started_at = self._utc_now()
+            if not isinstance(started_at, datetime):
+                raise TypeError("The UTC clock must return a datetime")
+        except Exception:
+            started_at = datetime.now(timezone.utc)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        self._quarantine_started_at_utc = started_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        self._quarantine_source_folder = str(plan.source_root)
+        self._quarantine_folder_snapshot = str(plan.quarantine_root)
+        self._quarantine_batch_id = plan.batch_id
+        self._quarantine_items = tuple(
+            (str(item.source), str(item.destination)) for item in plan.items
+        )
+        self._quarantine_recorded = False
+
         self.status_label.setText(
             f"Moving: 0 of {len(checked)} files processed."
         )
@@ -773,11 +1068,16 @@ class MainWindow(QMainWindow):
 
     def _finish_quarantine(self, summary: Any, error: Exception | None) -> None:
         self._moving = False
+        duration_ms, saved = self._record_quarantine(summary, error)
         if error is not None:
-            self.status_label.setText("The move could not be completed.")
+            self.status_label.setText(self._final_quarantine_status(
+                "The move could not be completed.", duration_ms, saved
+            ))
             return
         if not isinstance(summary, QuarantineSummary):
-            self.status_label.setText("The move could not be completed.")
+            self.status_label.setText(self._final_quarantine_status(
+                "The move could not be completed.", duration_ms, saved
+            ))
             return
 
         moved = set()
@@ -799,24 +1099,94 @@ class MainWindow(QMainWindow):
         total = len(summary.outcomes)
         moved_count = summary.moved_count
         if summary.state is QuarantineState.COMPLETED:
-            self.status_label.setText(
-                f"Moved {moved_count} of {total} checked files to quarantine."
-            )
+            status = f"Moved {moved_count} of {total} checked files to quarantine."
         elif summary.state is QuarantineState.COMPLETED_WITH_FAILURES:
-            self.status_label.setText(
-                f"Quarantine finished with failures: {moved_count} moved, "
-                f"{skipped} skipped."
-            )
+            status = (f"Quarantine finished with failures: {moved_count} moved, "
+                      f"{skipped} skipped.")
         else:
             failed = summary.failed_count
             conflicts = summary.conflict_count
-            self.status_label.setText(
-                f"No checked files could be moved: {failed} failed, "
-                f"{conflicts} conflicts."
-            )
+            status = (f"No checked files could be moved: {failed} failed, "
+                      f"{conflicts} conflicts.")
+        self.status_label.setText(self._final_quarantine_status(status, duration_ms, saved))
         self.move_log_label.setText(str(summary.quarantine_root / MOVE_LOG_NAME))
 
+    def _quarantine_elapsed_ms(self) -> int:
+        if self._quarantine_started_monotonic is None:
+            return 0
+        try:
+            return max(0, int((self._monotonic() - self._quarantine_started_monotonic) * 1000))
+        except Exception:
+            return 0
+
+    def _record_quarantine(
+        self, summary: Any, error: Exception | None
+    ) -> tuple[int, bool]:
+        duration_ms = self._quarantine_elapsed_ms()
+        if self._quarantine_started_at_utc is None:
+            return duration_ms, True
+        if self._quarantine_recorded:
+            return duration_ms, True
+        self._quarantine_recorded = True
+        valid = error is None and isinstance(summary, QuarantineSummary)
+        if valid:
+            outcomes = {
+                QuarantineState.COMPLETED: "completed",
+                QuarantineState.COMPLETED_WITH_FAILURES: "completed_with_failures",
+                QuarantineState.FAILED: "failed",
+            }
+            files = tuple(
+                QuarantineFileHistory(
+                    str(item.source), str(item.destination), {
+                        MoveStatus.MOVED: "moved",
+                        MoveStatus.CONFLICT: "conflict",
+                        MoveStatus.FAILED: "failed",
+                    }[item.status], item.message
+                )
+                for item in summary.outcomes
+            )
+            values = (
+                str(summary.quarantine_root), summary.batch_id,
+                outcomes.get(summary.state, "failed"), summary.moved_count,
+                summary.conflict_count, summary.failed_count, files,
+            )
+        else:
+            message = "Outcome unavailable. Check the quarantine move log."
+            files = tuple(
+                QuarantineFileHistory(source, destination, "unknown", message)
+                for source, destination in self._quarantine_items
+            )
+            values = (
+                self._quarantine_folder_snapshot or str(Path.cwd()),
+                self._quarantine_batch_id or "Unknown", "failed", None, None, None,
+                files,
+            )
+        try:
+            record = QuarantineHistoryRecord(
+                self._quarantine_started_at_utc,
+                self._quarantine_source_folder or str(Path.cwd()),
+                values[0], values[1], values[2], duration_ms,
+                values[3], values[4], values[5], values[6],
+            )
+            saved = append_activity_history(self._settings_store, record)
+        except Exception:
+            saved = False
+        return duration_ms, saved
+
+    @staticmethod
+    def _final_quarantine_status(status: str, duration_ms: int, saved: bool) -> str:
+        result = f"{status} Elapsed: {format_duration(duration_ms)}."
+        if not saved:
+            result += " Activity history could not be saved."
+        return result
+
     def closeEvent(self, event: Any) -> None:
+        if (
+            self._thread is not None
+            and self._operation_kind == "scan"
+            and not self._scan_recorded
+        ):
+            self._record_scan(None, None, forced_outcome="cancelled")
         self._closing = True
         self._generation += 1
         if self._cancel_event is not None:
@@ -832,6 +1202,8 @@ class MainWindow(QMainWindow):
             if thread.isRunning():
                 event.ignore()
                 return
+            if self._operation_kind == "quarantine":
+                self._record_quarantine(thread.result, thread.error)
             self._thread = None
         event.accept()
 
