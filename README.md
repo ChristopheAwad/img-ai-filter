@@ -15,10 +15,9 @@ app sends every supported image to that server one at a time.
 
 The server must be on loopback or the private local network. Before each scan,
 the app shows the exact destination, warns when HTTP is unencrypted, and asks
-for consent. Public Internet endpoints and redirects are rejected. Candidates
-with raw confidence above 80 percent start checked. Candidates at or below 80
-percent remain visible and start unchecked. Failed and uncertain results are
-omitted and included in visible counts.
+for consent. Public Internet endpoints and redirects are rejected. Every
+candidate starts unchecked. Failed and uncertain results are omitted and
+included in visible counts.
 
 The status line shows elapsed time during each approved scan and the final
 duration of scans and confirmed quarantine batches. **Activity History** shows
