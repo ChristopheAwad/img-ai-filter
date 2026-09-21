@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -66,12 +67,16 @@ from img_ai_filter.scan_workflow import (
 from img_ai_filter.scanner import ScanError, ScanResult, scan_images
 from img_ai_filter.settings import (
     ENDPOINT_URL_KEY,
+    MAX_AUTO_SELECT_CONFIDENCE_PERCENT,
+    MIN_AUTO_SELECT_CONFIDENCE_PERCENT,
     QUARANTINE_FOLDER_KEY,
     SettingsStatus,
     clear_quarantine_folder,
+    load_auto_select_confidence,
     load_quarantine_folder,
     load_vision_endpoint_settings,
     save_quarantine_folder,
+    save_auto_select_confidence,
     save_vision_endpoint_settings,
 )
 from img_ai_filter.vision_connection import VisionConnectionError, discover_koboldcpp
@@ -227,6 +232,62 @@ class ActivityHistoryDialog(QDialog):
             )
 
 
+class CandidateSelectionSettingsDialog(QDialog):
+    """Configure automatic selection for candidates from future scans."""
+
+    def __init__(
+        self, store: Any, threshold: int, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self._store = store
+        self.selected_threshold = threshold
+        self.setWindowTitle("Settings")
+
+        label = QLabel("Automatic-selection confidence threshold")
+        self.threshold_spin = QSpinBox()
+        self.threshold_spin.setRange(
+            MIN_AUTO_SELECT_CONFIDENCE_PERCENT, MAX_AUTO_SELECT_CONFIDENCE_PERCENT
+        )
+        label.setBuddy(self.threshold_spin)
+        self.threshold_spin.setSuffix("%")
+        self.threshold_spin.setValue(threshold)
+        field = QHBoxLayout()
+        field.addWidget(label)
+        field.addWidget(self.threshold_spin)
+
+        self.explanation_label = QLabel(
+            "Candidates from future scans start checked when their model-reported "
+            "confidence meets this threshold. Existing review choices do not change."
+        )
+        self.explanation_label.setWordWrap(True)
+        self.error_label = QLabel()
+        self.error_label.setObjectName("status")
+
+        self.save_button = QPushButton("Save")
+        self.save_button.setDefault(True)
+        self.cancel_button = QPushButton("Cancel")
+        self.save_button.clicked.connect(self._save)
+        self.cancel_button.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.save_button)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(field)
+        layout.addWidget(self.explanation_label)
+        layout.addWidget(self.error_label)
+        layout.addLayout(buttons)
+
+    def _save(self) -> None:
+        value = self.threshold_spin.value()
+        if not save_auto_select_confidence(self._store, value):
+            self.error_label.setText("The automatic-selection threshold could not be saved.")
+            return
+        self.selected_threshold = value
+        self.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -291,6 +352,9 @@ class MainWindow(QMainWindow):
         self._scan_timer = QTimer(self)
         self._scan_timer.setInterval(1000)
         self._scan_timer.timeout.connect(self._render_live_scan_status)
+        self._auto_select_confidence_percent = load_auto_select_confidence(
+            self._settings_store
+        )
 
         server_url = DEFAULT_SERVER_URL
         if initial_config is not None:
@@ -390,6 +454,11 @@ class MainWindow(QMainWindow):
         self.activity_history_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.activity_history_button.clicked.connect(self._show_activity_history)
 
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("secondaryButton")
+        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_button.clicked.connect(self._show_settings)
+
         folder_row = QHBoxLayout()
         folder_row.setSpacing(16)
         folder_row.addWidget(self.folder_label, 1)
@@ -397,6 +466,7 @@ class MainWindow(QMainWindow):
         folder_row.addWidget(self.scan_button)
         folder_row.addWidget(self.cancel_button)
         folder_row.addWidget(self.activity_history_button)
+        folder_row.addWidget(self.settings_button)
 
         quarantine_heading = QLabel("Quarantine folder")
         quarantine_heading.setObjectName("sectionHeading")
@@ -549,6 +619,7 @@ class MainWindow(QMainWindow):
         self.selection_button.setText(selection_text)
         self.selection_button.setEnabled(not active and selection_ready)
         self.activity_history_button.setEnabled(not active)
+        self.settings_button.setEnabled(not active)
 
     def _selection_button_state(self) -> tuple[str, bool]:
         count = self.results_list.count()
@@ -839,7 +910,12 @@ class MainWindow(QMainWindow):
             if not preview.isNull():
                 item.setIcon(QIcon(preview))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
+            threshold = self._auto_select_confidence_percent / 100
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if candidate.confidence >= threshold
+                else Qt.CheckState.Unchecked
+            )
             self.results_list.addItem(item)
         self.status_label.setText(
             self._final_scan_status(self._summary_text(summary), duration_ms, saved)
@@ -931,6 +1007,17 @@ class MainWindow(QMainWindow):
         if self._thread is not None:
             return
         ActivityHistoryDialog(self._settings_store, self).exec()
+
+    def _show_settings(self) -> None:
+        if self._thread is not None:
+            return
+        dialog = CandidateSelectionSettingsDialog(
+            self._settings_store,
+            self._auto_select_confidence_percent,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._auto_select_confidence_percent = dialog.selected_threshold
 
     @staticmethod
     def _summary_text(summary: ScanSummary) -> str:

@@ -15,9 +15,10 @@ app sends every supported image to that server one at a time.
 
 The server must be on loopback or the private local network. Before each scan,
 the app shows the exact destination, warns when HTTP is unencrypted, and asks
-for consent. Public Internet endpoints and redirects are rejected. Every
-candidate starts unchecked. Failed and uncertain results are omitted and
-included in visible counts.
+for consent. Public Internet endpoints and redirects are rejected. By default,
+candidates with model-reported confidence of 90% or higher start checked; lower
+confidence candidates start unchecked. Failed and uncertain results are omitted
+and included in visible counts.
 
 The status line shows elapsed time during each approved scan and the final
 duration of scans and confirmed quarantine batches. **Activity History** shows
@@ -95,10 +96,12 @@ python -m img_ai_filter
 4. Select a test folder with **Select Folder**.
 5. Select **Scan Folder**, read the transfer warning, and consent only if the
    displayed destination is correct.
-6. Optionally select **Select Quarantine Folder**, review the previews, use
+6. Use **Settings** to change the automatic-selection confidence threshold if
+   needed. It accepts 50% through 100% and applies to future scan results only.
+7. Optionally select **Select Quarantine Folder**, review the previews, use
    **Select All** or **Clear All** if useful, and choose **Move Checked to
    Quarantine** after reading the exact confirmation details.
-7. Select **Activity History** while the app is idle to inspect scan and
+8. Select **Activity History** while the app is idle to inspect scan and
    quarantine events or clear the saved app history.
 
 Selecting a folder does not search it, load images, or contact the server.
@@ -109,10 +112,14 @@ During an approved scan, supported images are resized and converted to PNG in
 memory, then sent sequentially. The app shows only screenshot/meme-style
 candidates. It does not rename, move, delete, or edit source images.
 
-Every displayed candidate starts unchecked. The bulk-selection control changes
-only the current review state: it shows **Select All** while any row is
-unchecked, and **Clear All** when every row is checked. A rescan replaces prior
-rows and every new candidate starts unchecked.
+The default automatic-selection threshold is 90%. This confidence is reported
+by the selected model and is not a calibrated probability or accuracy
+guarantee. **Settings** can save an integer threshold from 50% through 100%.
+Changing it does not alter current review choices; the next scan uses it for new
+rows. The bulk-selection control changes only current review state: it shows
+**Select All** while any row is unchecked, and **Clear All** when every row is
+checked. Automatic selection never starts a quarantine move, which still
+requires exact-path confirmation.
 
 ## Tests
 

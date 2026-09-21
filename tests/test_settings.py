@@ -13,15 +13,19 @@ import pytest
 
 import img_ai_filter.settings as settings_mod
 from img_ai_filter.settings import (
+    AUTO_SELECT_CONFIDENCE_KEY,
+    DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT,
     IniSettingsStore,
     SettingsStatus,
     clear_api_key,
     clear_endpoint_settings,
     clear_quarantine_folder,
     load_api_key,
+    load_auto_select_confidence,
     load_endpoint_settings,
     load_quarantine_folder,
     save_api_key,
+    save_auto_select_confidence,
     save_endpoint_settings,
     save_quarantine_folder,
     QUARANTINE_FOLDER_KEY,
@@ -76,6 +80,73 @@ class InMemoryCredentialStore:
         if self.delete_error is not None:
             raise self.delete_error("delete denied")
         self.secrets.pop((service, account), None)
+
+
+def test_auto_select_confidence_key_and_default_are_stable() -> None:
+    assert AUTO_SELECT_CONFIDENCE_KEY == "auto_select_confidence_percent"
+    assert DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT == 90
+
+
+def test_absent_auto_select_confidence_uses_default_without_write() -> None:
+    store = InMemorySettingsStore()
+
+    loaded = load_auto_select_confidence(store)
+
+    assert loaded == 90
+    assert store.writes == []
+
+
+@pytest.mark.parametrize("value", [50, 51, 89, 90, 99, 100])
+def test_valid_auto_select_confidence_loads_exactly(value: int) -> None:
+    store = InMemorySettingsStore({AUTO_SELECT_CONFIDENCE_KEY: str(value)})
+
+    assert load_auto_select_confidence(store) == value
+    assert store.writes == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", " ", "49", "101", " 90", "90 ", "+90", "-90", "090", "90.0", "9e1", "nan", "inf", "value"],
+)
+def test_invalid_auto_select_confidence_uses_default_without_repair(value: str) -> None:
+    store = InMemorySettingsStore({AUTO_SELECT_CONFIDENCE_KEY: value})
+
+    assert load_auto_select_confidence(store) == 90
+    assert store.values[AUTO_SELECT_CONFIDENCE_KEY] == value
+    assert store.writes == []
+
+
+def test_auto_select_confidence_read_failure_uses_default() -> None:
+    class FailingStore:
+        def read(self, key):
+            raise OSError("private failure")
+
+    assert load_auto_select_confidence(FailingStore()) == 90
+
+
+@pytest.mark.parametrize("value", [50, 73, 90, 100])
+def test_save_auto_select_confidence_round_trips(value: int) -> None:
+    store = InMemorySettingsStore()
+
+    assert save_auto_select_confidence(store, value)
+    assert store.values[AUTO_SELECT_CONFIDENCE_KEY] == str(value)
+    assert load_auto_select_confidence(store) == value
+
+
+@pytest.mark.parametrize("value", [49, 101, -1, 90.0, "90", None, True, False])
+def test_save_auto_select_confidence_rejects_invalid_values(value) -> None:
+    store = InMemorySettingsStore()
+
+    assert not save_auto_select_confidence(store, value)
+    assert store.writes == []
+
+
+def test_save_auto_select_confidence_handles_write_failure() -> None:
+    class FailingStore:
+        def write(self, key, value):
+            raise OSError("private failure")
+
+    assert not save_auto_select_confidence(FailingStore(), 90)
 
 
 def _seed_valid(store: InMemorySettingsStore) -> None:

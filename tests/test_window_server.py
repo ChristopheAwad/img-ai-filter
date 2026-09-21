@@ -9,7 +9,7 @@ from threading import Event
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 import img_ai_filter.window as window_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
@@ -30,8 +30,17 @@ from img_ai_filter.activity_history import (
     load_activity_history,
 )
 from img_ai_filter.vision_connection import KoboldCppInfo, VisionConnectionError
-from img_ai_filter.window import ActivityHistoryDialog, DEFAULT_SERVER_URL, MainWindow
-from img_ai_filter.settings import QUARANTINE_FOLDER_KEY
+from img_ai_filter.window import (
+    ActivityHistoryDialog,
+    CandidateSelectionSettingsDialog,
+    DEFAULT_SERVER_URL,
+    MainWindow,
+)
+from img_ai_filter.settings import (
+    AUTO_SELECT_CONFIDENCE_KEY,
+    QUARANTINE_FOLDER_KEY,
+    load_auto_select_confidence,
+)
 
 
 READY_CONFIG = build_vision_endpoint_config(
@@ -80,7 +89,7 @@ def _candidate(path: Path, category: str = "screenshot") -> ScanCandidate:
         path,
         category,
         f"Visual reason for {category}.",
-        0.9,
+        0.8,
         _identity(data),
         ONE_PIXEL_PNG,
         1,
@@ -321,6 +330,7 @@ def test_accepting_consent_runs_background_scan_and_shows_exact_summary(
     assert not window.test_connection_button.isEnabled()
     assert not window.scan_button.isEnabled()
     assert window.cancel_button.isEnabled()
+    assert not window.settings_button.isEnabled()
     timer_fired = []
     QTimer.singleShot(0, lambda: timer_fired.append(True))
     qtbot.waitUntil(lambda: timer_fired == [True])
@@ -333,6 +343,7 @@ def test_accepting_consent_runs_background_scan_and_shows_exact_summary(
         "Elapsed: <1 sec."
     )
     assert not window.cancel_button.isEnabled()
+    assert window.settings_button.isEnabled()
 
 
 def test_completed_operation_thread_is_scheduled_for_deletion(
@@ -1586,6 +1597,243 @@ def test_history_dialog_clear_failure_retains_rows_and_hides_private_error(
 
 
 # ---------------------------------------------------------------------------
+# Automatic candidate selection settings
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_selection_settings_dialog_has_expected_range(qtbot) -> None:
+    dialog = CandidateSelectionSettingsDialog(MemoryStore(), 90)
+    qtbot.addWidget(dialog)
+
+    assert dialog.threshold_spin.minimum() == 50
+    assert dialog.threshold_spin.maximum() == 100
+    assert dialog.threshold_spin.value() == 90
+    assert dialog.threshold_spin.suffix() == "%"
+    assert "future scans" in dialog.explanation_label.text().lower()
+
+
+def test_candidate_selection_settings_dialog_cancel_writes_nothing(qtbot) -> None:
+    store = MemoryStore()
+    dialog = CandidateSelectionSettingsDialog(store, 90)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(50)
+
+    dialog.cancel_button.click()
+
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    assert store.values == {}
+
+
+def test_candidate_selection_settings_dialog_save_persists(qtbot) -> None:
+    store = MemoryStore()
+    dialog = CandidateSelectionSettingsDialog(store, 90)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(73)
+
+    dialog.save_button.click()
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.selected_threshold == 73
+    assert store.values[AUTO_SELECT_CONFIDENCE_KEY] == "73"
+
+
+def test_candidate_selection_settings_dialog_failed_save_stays_open(qtbot) -> None:
+    store = MemoryStore()
+    store.write_error = True
+    dialog = CandidateSelectionSettingsDialog(store, 90)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(50)
+
+    dialog.save_button.click()
+
+    assert dialog.result() == 0
+    assert dialog.selected_threshold == 90
+    assert "could not be saved" in dialog.error_label.text().lower()
+    assert "private" not in dialog.error_label.text().lower()
+
+
+def test_settings_button_is_available_while_idle(qtbot) -> None:
+    window = MainWindow(settings_store=MemoryStore())
+    qtbot.addWidget(window)
+
+    assert window.settings_button.text() == "Settings"
+    assert window.settings_button.isEnabled()
+
+
+def test_saved_threshold_changes_next_scan_not_current_rows(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = ScanCandidate(
+        source_file,
+        "screenshot",
+        "Visual reason for screenshot.",
+        0.8,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+    )
+    store = MemoryStore()
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(candidates=(candidate,)),
+        confirm_transfer=lambda *_: True,
+        settings_store=store,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+    window.scan_button.click()
+    qtbot.waitUntil(
+        lambda: window.results_list.count() == 1 and window.scan_button.isEnabled()
+    )
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
+
+    class AcceptedDialog:
+        def __init__(self, settings_store, threshold, parent):
+            assert threshold == 90
+            assert settings_store is store
+            self.selected_threshold = 50
+            settings_store.write(AUTO_SELECT_CONFIDENCE_KEY, "50")
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(window_module, "CandidateSelectionSettingsDialog", AcceptedDialog)
+    window.settings_button.click()
+
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+
+
+def test_candidate_selection_settings_dialog_retries_after_transient_failure(
+    qtbot,
+) -> None:
+    store = MemoryStore()
+    store.write_error = True
+    dialog = CandidateSelectionSettingsDialog(store, 90)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(73)
+    dialog.save_button.click()
+
+    assert dialog.result() == 0
+    assert dialog.error_label.text()
+
+    store.write_error = False
+    dialog.save_button.click()
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.selected_threshold == 73
+    assert store.values[AUTO_SELECT_CONFIDENCE_KEY] == "73"
+
+
+def test_candidate_selection_settings_dialog_reopen_shows_saved_value(qtbot) -> None:
+    store = MemoryStore()
+    first = CandidateSelectionSettingsDialog(store, 90)
+    qtbot.addWidget(first)
+    first.threshold_spin.setValue(73)
+    first.save_button.click()
+    assert first.result() == QDialog.DialogCode.Accepted
+
+    reopened = CandidateSelectionSettingsDialog(
+        store, load_auto_select_confidence(store)
+    )
+    qtbot.addWidget(reopened)
+
+    assert reopened.threshold_spin.value() == 73
+
+
+def test_candidate_selection_settings_dialog_close_rejection_writes_nothing(
+    qtbot,
+) -> None:
+    store = MemoryStore()
+    dialog = CandidateSelectionSettingsDialog(store, 90)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(50)
+
+    dialog.reject()
+
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    assert dialog.selected_threshold == 90
+    assert store.values == {}
+
+
+def _threshold_candidate(path: Path, confidence: float) -> ScanCandidate:
+    return ScanCandidate(
+        path,
+        "screenshot",
+        "Visual reason for screenshot.",
+        confidence,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+    )
+
+
+def test_mixed_auto_and_unchecked_rows_preserve_order_and_toggle(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_high = tmp_path / "source" / "high.png"
+    source_low = tmp_path / "source" / "low.png"
+    candidate_high = _threshold_candidate(source_high, 0.95)
+    candidate_low = _threshold_candidate(source_low, 0.5)
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (candidate_high, candidate_low)
+    )
+
+    assert window.results_list.count() == 2
+    assert (
+        window.results_list.item(0).data(Qt.ItemDataRole.UserRole) is candidate_high
+    )
+    assert window.results_list.item(1).data(Qt.ItemDataRole.UserRole) is candidate_low
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.results_list.item(1).checkState() == Qt.CheckState.Unchecked
+    assert window.selection_button.text() == "Select All"
+
+    window.selection_button.click()
+    assert window.selection_button.text() == "Clear All"
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.results_list.item(1).checkState() == Qt.CheckState.Checked
+
+    window.selection_button.click()
+    assert window.selection_button.text() == "Select All"
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
+    assert window.results_list.item(1).checkState() == Qt.CheckState.Unchecked
+
+
+def test_auto_checked_row_drives_move_readiness_and_confirmation(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "high.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _threshold_candidate(source_file, 0.95)
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert not window.move_quarantine_button.isEnabled()
+
+    _pick_quarantine(window, monkeypatch, quarantine)
+    assert window.move_quarantine_button.isEnabled()
+
+    confirmations = []
+
+    def on_confirm(paths, folder):
+        confirmations.append((tuple(paths), folder))
+        return False
+
+    window._confirm_quarantine = on_confirm
+    window.move_quarantine_button.click()
+
+    assert confirmations == [((str(source_file),), str(quarantine))]
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+
+
+# ---------------------------------------------------------------------------
 # Bulk selection (Select All / Clear All)
 # ---------------------------------------------------------------------------
 
@@ -1676,9 +1924,19 @@ def test_worker_exception_leaves_selection_disabled(
     assert "private failure" not in window.status_label.text()
 
 
-@pytest.mark.parametrize("confidence", [0.0, 0.8, 0.800001, 0.9, 1.0])
-def test_candidates_start_unchecked_for_any_confidence(
-    qtbot, monkeypatch, tmp_path: Path, confidence: float
+@pytest.mark.parametrize(
+    ("confidence", "expected"),
+    [
+        (0.0, Qt.CheckState.Unchecked),
+        (0.5, Qt.CheckState.Unchecked),
+        (0.899999, Qt.CheckState.Unchecked),
+        (0.9, Qt.CheckState.Checked),
+        (0.900001, Qt.CheckState.Checked),
+        (1.0, Qt.CheckState.Checked),
+    ],
+)
+def test_candidates_use_default_auto_select_threshold(
+    qtbot, monkeypatch, tmp_path: Path, confidence: float, expected: Qt.CheckState
 ) -> None:
     source_file = tmp_path / "source" / "shot.png"
     candidate = ScanCandidate(
@@ -1694,10 +1952,58 @@ def test_candidates_start_unchecked_for_any_confidence(
     window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
 
     item = window.results_list.item(0)
-    assert item.checkState() == Qt.CheckState.Unchecked
-    assert window.selection_button.text() == "Select All"
+    assert item.checkState() == expected
+    expected_button = "Clear All" if expected == Qt.CheckState.Checked else "Select All"
+    assert window.selection_button.text() == expected_button
     assert window.selection_button.isEnabled()
-    assert not window.move_quarantine_button.isEnabled()
+
+
+@pytest.mark.parametrize(
+    ("threshold", "confidence", "expected"),
+    [
+        (50, 0.499999, Qt.CheckState.Unchecked),
+        (50, 0.5, Qt.CheckState.Checked),
+        (73, 0.729999, Qt.CheckState.Unchecked),
+        (73, 0.73, Qt.CheckState.Checked),
+        (100, 0.999999, Qt.CheckState.Unchecked),
+        (100, 1.0, Qt.CheckState.Checked),
+    ],
+)
+def test_candidates_use_persisted_auto_select_threshold(
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+    threshold: int,
+    confidence: float,
+    expected: Qt.CheckState,
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = ScanCandidate(
+        source_file,
+        "screenshot",
+        "Visual reason for screenshot.",
+        confidence,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+    )
+    store = MemoryStore()
+    store.values[AUTO_SELECT_CONFIDENCE_KEY] = str(threshold)
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(candidates=(candidate,)),
+        confirm_transfer=lambda *_: True,
+        settings_store=store,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.results_list.count() == 1)
+
+    assert window.results_list.item(0).checkState() == expected
 
 
 def test_mixed_rows_preserve_order_data_and_unchecked_state(

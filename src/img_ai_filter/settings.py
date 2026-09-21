@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from img_ai_filter.endpoint import (
@@ -23,13 +24,50 @@ from img_ai_filter.endpoint import (
     build_endpoint_config,
     build_vision_endpoint_config,
 )
+from img_ai_filter.detection import DEFAULT_HIGH_CONFIDENCE_THRESHOLD
 from img_ai_filter.scanner import is_windows_reparse_point
 
 ENDPOINT_URL_KEY = "endpoint_url"
 ENDPOINT_MODEL_KEY = "endpoint_model"
+AUTO_SELECT_CONFIDENCE_KEY = "auto_select_confidence_percent"
+DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT = round(DEFAULT_HIGH_CONFIDENCE_THRESHOLD * 100)
+MIN_AUTO_SELECT_CONFIDENCE_PERCENT = 50
+MAX_AUTO_SELECT_CONFIDENCE_PERCENT = 100
 CREDENTIAL_SERVICE = "img_ai_filter"
 
 _SECTION = "settings"
+_CANONICAL_PERCENT = re.compile(r"(?:[1-9][0-9]?|100)\Z")
+
+
+def load_auto_select_confidence(store: Any) -> int:
+    """Load a canonical high-confidence percentage or use the safe default."""
+    try:
+        raw = store.read(AUTO_SELECT_CONFIDENCE_KEY)
+    except Exception:
+        return DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT
+    if not isinstance(raw, str) or _CANONICAL_PERCENT.fullmatch(raw) is None:
+        return DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT
+    value = int(raw)
+    if not MIN_AUTO_SELECT_CONFIDENCE_PERCENT <= value <= MAX_AUTO_SELECT_CONFIDENCE_PERCENT:
+        return DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT
+    return value
+
+
+def save_auto_select_confidence(store: Any, value: object) -> bool:
+    """Persist a validated integer percentage without exposing store errors."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not MIN_AUTO_SELECT_CONFIDENCE_PERCENT
+        <= value
+        <= MAX_AUTO_SELECT_CONFIDENCE_PERCENT
+    ):
+        return False
+    try:
+        store.write(AUTO_SELECT_CONFIDENCE_KEY, str(value))
+    except Exception:
+        return False
+    return True
 
 
 class SettingsStatus(Enum):
