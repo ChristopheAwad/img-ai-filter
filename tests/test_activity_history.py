@@ -474,3 +474,55 @@ def test_quarantine_serialization_has_exact_tagged_schema_and_unicode_paths() ->
         "message": "Moved successfully.",
     }]
     assert load_activity_history(store) == (record,)
+
+
+@pytest.mark.parametrize(
+    ("source", "destination"),
+    [
+        (r"C:\images\shot.png", r"D:\quarantine\shot.png"),
+        (r"\\server\images\shot.png", r"\\server\quarantine\shot.png"),
+    ],
+)
+def test_quarantine_file_accepts_windows_absolute_paths(
+    source: str, destination: str
+) -> None:
+    record = _file(source=source, destination=destination)
+    assert record.source == source
+    assert record.destination == destination
+
+
+def test_version_two_load_keeps_valid_mixed_records_and_omits_corruption() -> None:
+    scan = _record(1)
+    quarantine = _quarantine(2)
+    valid_scan = {"type": "scan", **_record_dict(scan)}
+    invalid_scan = dict(valid_scan, duration_ms=-1)
+    valid_quarantine = {
+        "type": "quarantine",
+        "started_at_utc": quarantine.started_at_utc,
+        "source_folder": quarantine.source_folder,
+        "quarantine_folder": quarantine.quarantine_folder,
+        "batch_id": quarantine.batch_id,
+        "outcome": quarantine.outcome,
+        "duration_ms": quarantine.duration_ms,
+        "moved": quarantine.moved,
+        "conflicts": quarantine.conflicts,
+        "failed": quarantine.failed,
+        "files": [
+            {
+                "source": item.source,
+                "destination": item.destination,
+                "status": item.status,
+                "message": item.message,
+            }
+            for item in quarantine.files
+        ],
+    }
+    invalid_quarantine = dict(valid_quarantine, moved=0)
+    raw = json.dumps(
+        {
+            "schema_version": 2,
+            "records": [valid_scan, invalid_scan, invalid_quarantine, valid_quarantine],
+        }
+    )
+
+    assert load_activity_history(MemoryStore(raw)) == (scan, quarantine)

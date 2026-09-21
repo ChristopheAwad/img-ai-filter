@@ -3,8 +3,8 @@
 ## Status
 
 The user approved the plan on 2026-09-20. The expanded scan and quarantine
-activity-history implementation and automated verification are complete.
-Desktop GUI approval is pending.
+activity-history implementation and automated verification are complete. The
+user approved the desktop GUI on 2026-09-21 and authorized PR #7 for merge.
 
 The feature was selected on 2026-09-20. It adds a live elapsed timer, a final
 duration for every accepted scan attempt, and a local history of the newest 100
@@ -1129,8 +1129,9 @@ error text, and screenshot.
 
 ### Current blocker
 
-Desktop GUI approval is pending. Automated verification completed with 794
-passed, 4 skipped, and 1 expected Pillow warning on 2026-09-21.
+None. Desktop GUI approval was received on 2026-09-21. Final automated
+verification completed with 798 passed, 4 skipped, and 1 expected Pillow
+warning after the review follow-up tests were added.
 
 ### Next steps for next agent
 
@@ -1143,6 +1144,5 @@ passed, 4 skipped, and 1 expected Pillow warning on 2026-09-21.
 5. Start with failing version-2/migration tests in the GUI-neutral history test
    file. Do not edit production history or GUI code until those failures are
    demonstrated.
-6. No Git operation is authorized. The feature still requires implementation,
-   full automated verification, revised desktop testing, and explicit user
-   approval.
+6. PR #7 was opened after desktop approval. The user authorized the requested
+   review follow-ups and merge without another review pass.

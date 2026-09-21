@@ -1165,6 +1165,75 @@ def test_close_during_quarantine_waits_for_move_then_closes(
     assert (quarantine / "shot.png").exists() is False
 
 
+def test_close_timeout_and_repeated_close_record_quarantine_once(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    entered = Event()
+    release = Event()
+    store = MemoryStore()
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        entered.set()
+        release.wait(2)
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(
+                    source_file,
+                    quarantine / "shot.png",
+                    MoveStatus.MOVED,
+                    "",
+                ),
+            ),
+            QuarantineState.COMPLETED,
+        )
+
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    window._settings_store = store
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(entered.is_set)
+    thread = window._thread
+    assert thread is not None
+    monkeypatch.setattr(thread, "wait", lambda *args: False)
+
+    class CloseEvent:
+        def __init__(self) -> None:
+            self.accepted = False
+            self.ignored = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    first = CloseEvent()
+    second = CloseEvent()
+    window.closeEvent(first)
+    window.closeEvent(second)
+
+    assert first.ignored and second.ignored
+    assert load_activity_history(store) == ()
+
+    release.set()
+    qtbot.waitUntil(lambda: window._thread is None)
+    records = load_activity_history(store)
+    assert len(records) == 1
+    assert isinstance(records[0], QuarantineHistoryRecord)
+    assert records[0].outcome == "completed"
+    assert records[0].moved == 1
+
+
 def test_candidate_rows_store_candidate_and_thumbnail_icon(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
@@ -1477,7 +1546,7 @@ def test_activity_history_dialog_shows_quarantine_children(qtbot) -> None:
     parent = dialog.tree.topLevelItem(0)
     assert [parent.text(index) for index in range(7)] == [
         "Quarantine", "2026-09-20T12:00:00Z", "/source", "/quarantine",
-        "Completed with failures", "2 sec", "1 moved, 1 conflicts, 0 failed",
+        "Completed with failures", "2 sec", "1 moved, 1 conflict, 0 failed",
     ]
     assert parent.childCount() == 2
     assert [parent.child(1).text(index) for index in range(7)] == [

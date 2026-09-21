@@ -220,7 +220,7 @@ Implementation order:
 
 ### F-006: Scan Timing and Activity History
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-21 (PR #7)
 - **Tier:** Tier 2, workflow visibility and local records
 - **Effort:** Medium because complete attempt timing must cover discovery, live progress, cancellation, worker failures, safe shutdown, durable bounded history, corruption recovery, and a testable Qt dialog
 - **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`

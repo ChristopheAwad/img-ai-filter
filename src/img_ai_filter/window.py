@@ -191,7 +191,9 @@ class ActivityHistoryDialog(QDialog):
                 self.tree.addTopLevelItem(QTreeWidgetItem(values))
                 continue
             counts = "Counts unavailable" if record.moved is None else (
-                f"{record.moved} moved, {record.conflicts} conflicts, {record.failed} failed"
+                f"{record.moved} moved, {record.conflicts} "
+                f"{'conflict' if record.conflicts == 1 else 'conflicts'}, "
+                f"{record.failed} failed"
             )
             results = {"completed": "Completed", "completed_with_failures": "Completed with failures", "failed": "Failed"}
             parent = QTreeWidgetItem(("Quarantine", record.started_at_utc,
