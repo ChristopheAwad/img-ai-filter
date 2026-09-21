@@ -18,11 +18,15 @@ class OperationThread(QThread):
     def __init__(self, operation: Callable[[Callable[[int, int], None]], Any], parent=None) -> None:
         super().__init__(parent)
         self._operation = operation
+        self.result: Any = None
+        self.error: Exception | None = None
 
     def run(self) -> None:
         try:
             result = self._operation(self.progress.emit)
         except Exception as error:
+            self.error = error
             self.failed.emit(error)
         else:
+            self.result = result
             self.succeeded.emit(result)

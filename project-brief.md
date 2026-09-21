@@ -16,6 +16,7 @@ A privacy-conscious desktop app that finds screenshots and memes in user-selecte
 8. If analysis fails or remains uncertain, the image is omitted and included in visible uncertain or failed-analysis counts.
 9. Each displayed result explains its source path, flagging reason, and confidence, and shows a compact in-memory preview.
 10. The user reviews the candidates, checks exactly the ones to move, and reads each exact source and destination before any quarantine move starts.
+11. During each accepted scan, the application shows elapsed time. It adds final duration to scan and confirmed quarantine results and saves bounded local activity history.
 
 Selecting a different folder clears results from the prior folder and enables a new scan. Cancelling folder selection changes nothing. A completed or failed scan can be retried, and each new scan replaces prior results and review states.
 
@@ -45,6 +46,10 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Support quarantine folders on a different filesystem through a verified byte-for-byte copy followed by source removal.
 - Write a durable append-only JSON Lines move record in the quarantine folder explaining planned, moved, conflict, and failed outcomes.
 - Remember and revalidate the chosen quarantine folder; a missing or overlapping folder never enables a move.
+- Show live elapsed time from accepted consent through discovery, analysis, cancellation shutdown, or failure.
+- Keep the newest 100 combined scan and confirmed quarantine events in application settings. Scan records contain the UTC start time, source-folder path, model name, outcome, duration, and aggregate counts. Quarantine records also contain exact source and destination file paths and safe per-file outcomes.
+- Do not put endpoint addresses, scan candidate paths, candidate reasons, image content, thumbnails, credentials, raw exceptions, or server responses in activity history.
+- Let the user view newest-first expandable activity history and clear all app records after explicit confirmation. Clearing app history does not change quarantine move logs.
 - Record review labels locally for future classifier evaluation.
 - The MVP only moves files to quarantine. It does not delete them, and it offers no automatic restoration.
 
