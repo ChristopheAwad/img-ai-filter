@@ -15,9 +15,10 @@ app sends every supported image to that server one at a time.
 
 The server must be on loopback or the private local network. Before each scan,
 the app shows the exact destination, warns when HTTP is unencrypted, and asks
-for consent. Public Internet endpoints and redirects are rejected. Every
-candidate starts unchecked. Failed and uncertain results are omitted and
-included in visible counts.
+for consent. Public Internet endpoints and redirects are rejected. Candidates
+with raw confidence above 80 percent start checked. Candidates at or below 80
+percent remain visible and start unchecked. Failed and uncertain results are
+omitted and included in visible counts.
 
 The status line shows elapsed time during each approved scan and the final
 duration of scans and confirmed quarantine batches. **Activity History** shows
@@ -95,9 +96,9 @@ python -m img_ai_filter
 4. Select a test folder with **Select Folder**.
 5. Select **Scan Folder**, read the transfer warning, and consent only if the
    displayed destination is correct.
-6. Optionally select **Select Quarantine Folder**, review the previews, check
-   candidates, and choose **Move Checked to Quarantine** after reading the exact
-   confirmation details.
+6. Optionally select **Select Quarantine Folder**, review the previews, use
+   **Select All** or **Clear All** if useful, and choose **Move Checked to
+   Quarantine** after reading the exact confirmation details.
 7. Select **Activity History** while the app is idle to inspect scan and
    quarantine events or clear the saved app history.
 
@@ -108,6 +109,11 @@ test has discovered a model.
 During an approved scan, supported images are resized and converted to PNG in
 memory, then sent sequentially. The app shows only screenshot/meme-style
 candidates. It does not rename, move, delete, or edit source images.
+
+Every displayed candidate starts unchecked. The bulk-selection control changes
+only the current review state: it shows **Select All** while any row is
+unchecked, and **Clear All** when every row is checked. A rescan replaces prior
+rows and every new candidate starts unchecked.
 
 ## Tests
 
