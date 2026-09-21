@@ -353,6 +353,17 @@ class MainWindow(QMainWindow):
         quarantine_ready = (
             self._quarantine_folder is not None and not self._quarantine_missing
         )
+        move_roots_ready = False
+        if quarantine_ready and self._selected_folder is not None:
+            try:
+                validate_quarantine_roots(
+                    self._selected_folder,
+                    self._quarantine_folder,
+                )
+            except QuarantineError:
+                pass
+            else:
+                move_roots_ready = True
         self.select_button.setEnabled(not active)
         self.server_url_input.setEnabled(not active)
         self.test_connection_button.setEnabled(not active)
@@ -364,8 +375,7 @@ class MainWindow(QMainWindow):
         self.forget_quarantine_button.setEnabled(not active and quarantine_ready)
         self.move_quarantine_button.setEnabled(
             not active
-            and self._selected_folder is not None
-            and quarantine_ready
+            and move_roots_ready
             and self._any_checked()
         )
 

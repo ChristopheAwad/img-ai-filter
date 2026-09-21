@@ -1089,9 +1089,9 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
     if not Path("/proc/self/fd").exists():
         pytest.skip("File-descriptor path resolution is not available here")
     plan, source_root, quarantine_root, _ = _make_plan(
-        tmp_path, {Path("nested/a.png"): b"aaa"}
+        tmp_path, {Path("one/two/three/a.png"): b"aaa"}
     )
-    destination = quarantine_root / "nested" / "a.png"
+    destination = quarantine_root / "one" / "two" / "three" / "a.png"
     events: list[tuple[str, str]] = []
     real_fsync = os.fsync
     real_makedirs = os.makedirs
@@ -1130,22 +1130,22 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
         if kind == "fsync" and str(path) == str(destination)
     )
     assert destination_fsync_index < unlink_index
-    parent_fsync_index = next(
-        i for i, (kind, path) in enumerate(events)
-        if kind == "fsync" and str(path) == str(destination.parent)
-    )
     makedirs_index = next(
         i for i, (kind, path) in enumerate(events) if kind == "makedirs"
     )
-    root_fsync_after_makedirs = next(
-        i for i, (kind, path) in enumerate(events)
-        if i > makedirs_index
-        and kind == "fsync"
-        and str(path) == str(quarantine_root)
-    )
-    assert parent_fsync_index < unlink_index
-    assert root_fsync_after_makedirs < unlink_index
-    assert not (source_root / "nested" / "a.png").exists()
+    current = destination.parent
+    while current.is_relative_to(quarantine_root):
+        ancestor_fsync_index = next(
+            i for i, (kind, path) in enumerate(events)
+            if i > makedirs_index
+            and kind == "fsync"
+            and str(path) == str(current)
+        )
+        assert ancestor_fsync_index < unlink_index
+        if current == quarantine_root:
+            break
+        current = current.parent
+    assert not (source_root / "one" / "two" / "three" / "a.png").exists()
     assert destination.read_bytes() == b"aaa"
 
 

@@ -706,6 +706,38 @@ def test_quarantine_cannot_be_placed_inside_source_folder(
     assert QUARANTINE_FOLDER_KEY not in store.values
 
 
+def test_overlapping_source_selected_after_quarantine_disables_move(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source_file = source_dir / "shot.png"
+    source_file.write_bytes(b"scan bytes")
+    quarantine = source_dir / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(
+            candidates=(candidate,),
+            discovered=1,
+            analyzed=1,
+        ),
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+
+    _pick_quarantine(window, monkeypatch, quarantine)
+    _select(window, monkeypatch, source_dir)
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.results_list.count() == 1)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+
+    assert not window.move_quarantine_button.isEnabled()
+
+
 def test_default_confirm_uses_source_and_destination_pairs(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
