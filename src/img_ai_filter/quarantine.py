@@ -93,24 +93,37 @@ def _make_batch_id() -> str:
     return stamp + "-" + uuid.uuid4().hex[:8]
 
 
-def validate_quarantine_folder(path) -> Path:
-    """Return the canonical path of a usable quarantine folder."""
+def _validate_folder(path, *, label: str, access_flags: int) -> Path:
     try:
         value = os.fspath(path)
     except TypeError:
-        raise QuarantineError("The quarantine folder path is invalid.") from None
+        raise QuarantineError(f"The {label} folder path is invalid.") from None
     if isinstance(value, bytes):
         value = os.fsdecode(value)
     if not value.strip():
-        raise QuarantineError("The quarantine folder path is invalid.")
+        raise QuarantineError(f"The {label} folder path is invalid.")
     candidate = Path(value)
     if candidate.is_symlink() or is_windows_reparse_point(candidate):
-        raise QuarantineError("Symbolic links are not accepted as quarantine folders.")
+        raise QuarantineError(
+            f"Symbolic links are not accepted as {label} folders."
+        )
     if not candidate.is_dir():
-        raise QuarantineError("The quarantine folder is not an existing directory.")
-    if not os.access(candidate, os.R_OK | os.W_OK | os.X_OK):
-        raise QuarantineError("The quarantine folder is not writable.")
+        raise QuarantineError(
+            f"The {label} folder is not an existing directory."
+        )
+    if not os.access(candidate, access_flags):
+        requirement = "writable" if access_flags & os.W_OK else "readable"
+        raise QuarantineError(f"The {label} folder is not {requirement}.")
     return candidate.resolve()
+
+
+def validate_quarantine_folder(path) -> Path:
+    """Return the canonical path of a usable quarantine folder."""
+    return _validate_folder(
+        path,
+        label="quarantine",
+        access_flags=os.R_OK | os.W_OK | os.X_OK,
+    )
 
 
 def _same_or_overlap(left: Path, right: Path) -> bool:
@@ -121,7 +134,11 @@ def _same_or_overlap(left: Path, right: Path) -> bool:
 
 def validate_quarantine_roots(source_root, quarantine_root) -> None:
     """Reject roots that are unsafe, missing, shared, or overlapping."""
-    source = validate_quarantine_folder(source_root)
+    source = _validate_folder(
+        source_root,
+        label="source",
+        access_flags=os.R_OK | os.X_OK,
+    )
     quarantine = validate_quarantine_folder(quarantine_root)
     if _same_or_overlap(source, quarantine):
         raise QuarantineError("The source and quarantine folders must be separate.")
@@ -350,7 +367,10 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                     progress(index + 1, total)
                 continue
 
-            _sync_directory(item.destination.parent)
+            _sync_destination_ancestors(
+                plan.quarantine_root,
+                item.destination.parent,
+            )
             try:
                 _remove_source(item.source)
             except Exception:
@@ -473,6 +493,16 @@ def _sync_directory(directory: Path) -> None:
         pass
     finally:
         os.close(descriptor)
+
+
+def _sync_destination_ancestors(root: Path, parent: Path) -> None:
+    """Best-effort sync of each destination directory through its root."""
+    current = parent
+    while current.is_relative_to(root):
+        _sync_directory(current)
+        if current == root:
+            return
+        current = current.parent
 
 
 def _write_move_log_records(log_path: Path, records: list[dict[str, Any]]) -> None:

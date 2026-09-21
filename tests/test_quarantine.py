@@ -188,6 +188,22 @@ def test_rejects_quarantine_folder_without_write_access(
     assert checked_flags == [os.R_OK | os.W_OK | os.X_OK]
 
 
+def test_source_folder_validation_uses_source_specific_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    quarantine = _quarantine_root(tmp_path)
+
+    def reject_source(folder, flags):
+        return folder != source
+
+    monkeypatch.setattr(quarantine_mod.os, "access", reject_source)
+
+    with pytest.raises(QuarantineError, match="source folder"):
+        validate_quarantine_roots(source, quarantine)
+
+
 def test_rejects_empty_or_non_path_input(tmp_path: Path) -> None:
     with pytest.raises(QuarantineError):
         validate_quarantine_roots("", tmp_path)
@@ -1078,6 +1094,7 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
     destination = quarantine_root / "nested" / "a.png"
     events: list[tuple[str, str]] = []
     real_fsync = os.fsync
+    real_makedirs = os.makedirs
 
     def recording_fsync(fd):
         try:
@@ -1089,11 +1106,16 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
 
     real_unlink = os.unlink
 
+    def recording_makedirs(path, *args, **kwargs):
+        events.append(("makedirs", str(path)))
+        return real_makedirs(path, *args, **kwargs)
+
     def recording_unlink(path):
         events.append(("unlink", str(path)))
         return real_unlink(path)
 
     monkeypatch.setattr(os, "fsync", recording_fsync)
+    monkeypatch.setattr(os, "makedirs", recording_makedirs)
     monkeypatch.setattr(os, "unlink", recording_unlink)
 
     execute_quarantine_plan(plan)
@@ -1112,7 +1134,17 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
         i for i, (kind, path) in enumerate(events)
         if kind == "fsync" and str(path) == str(destination.parent)
     )
+    makedirs_index = next(
+        i for i, (kind, path) in enumerate(events) if kind == "makedirs"
+    )
+    root_fsync_after_makedirs = next(
+        i for i, (kind, path) in enumerate(events)
+        if i > makedirs_index
+        and kind == "fsync"
+        and str(path) == str(quarantine_root)
+    )
     assert parent_fsync_index < unlink_index
+    assert root_fsync_after_makedirs < unlink_index
     assert not (source_root / "nested" / "a.png").exists()
     assert destination.read_bytes() == b"aaa"
 
@@ -1178,9 +1210,12 @@ def test_missing_move_log_is_not_treated_as_a_reparse_point(
     assert (quarantine_root / "a.png").read_bytes() == b"aaa"
 
 
-def test_roots_at_filesystem_root_reject_overlap(tmp_path: Path) -> None:
+def test_roots_at_filesystem_root_reject_overlap(
+    tmp_path: Path, monkeypatch
+) -> None:
     if os.name == "nt":
         pytest.skip("Filesystem-root overlap is checked on POSIX systems")
+    monkeypatch.setattr(quarantine_mod.os, "access", lambda folder, flags: True)
     with pytest.raises(QuarantineError):
         validate_quarantine_roots("/", tmp_path)
     with pytest.raises(QuarantineError):

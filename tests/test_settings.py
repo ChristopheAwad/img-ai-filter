@@ -396,6 +396,19 @@ def test_stored_reparse_point_quarantine_needs_repair(
     assert loaded.folder is None
 
 
+def test_stored_unwritable_quarantine_needs_repair(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings_mod.os, "access", lambda folder, flags: False)
+
+    loaded = load_quarantine_folder(
+        InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
+    )
+
+    assert loaded.status is SettingsStatus.NEEDS_REPAIR
+    assert loaded.folder is None
+
+
 def test_quarantine_folder_check_can_be_injected(tmp_path) -> None:
     store = InMemorySettingsStore({QUARANTINE_FOLDER_KEY: str(tmp_path)})
 
