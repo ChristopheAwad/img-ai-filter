@@ -114,9 +114,9 @@ def validate_quarantine_folder(path) -> Path:
 
 
 def _same_or_overlap(left: Path, right: Path) -> bool:
-    a = os.path.normcase(str(left))
-    b = os.path.normcase(str(right))
-    return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
+    left = left.resolve()
+    right = right.resolve()
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 
 
 def validate_quarantine_roots(source_root, quarantine_root) -> None:
@@ -153,7 +153,7 @@ def build_quarantine_plan(source_root, quarantine_root, candidates, *, batch_id=
         if not str(path_value).strip():
             raise QuarantineError("A candidate is not usable.")
         candidate_path = Path(path_value)
-        if candidate_path.is_symlink():
+        if candidate_path.is_symlink() or is_windows_reparse_point(candidate_path):
             raise QuarantineError("Symbolic links are not accepted as source files.")
         if not candidate_path.is_file():
             raise QuarantineError("The candidate is not a regular file.")
@@ -204,7 +204,7 @@ def _safety_walk(quarantine_root: Path, destination: Path) -> None:
     for part in relative_parent.parts:
         current = current / part
         try:
-            if stat.S_ISLNK(os.lstat(current).st_mode):
+            if stat.S_ISLNK(os.lstat(current).st_mode) or is_windows_reparse_point(current):
                 raise QuarantineError("A quarantine destination path is a symbolic link.")
         except FileNotFoundError:
             continue
@@ -216,6 +216,20 @@ CONFLICT_MESSAGE = "A file with the same name already exists in the quarantine f
 SAFE_ERROR_MESSAGE = "The file could not be moved safely."
 RECORD_ERROR_MESSAGE = "The move record could not be updated."
 REMOVE_ERROR_MESSAGE = "The source file could not be moved away after a verified copy."
+
+
+def _record_failure(
+    log_path: Path,
+    plan: QuarantinePlan,
+    item: QuarantineItem,
+    message: str,
+) -> bool:
+    """Best-effort append of a FAILED terminal record. Returns success."""
+    try:
+        _write_move_log_records(log_path, [_move_log_record(plan, item, "failed", message)])
+        return True
+    except (OSError, QuarantineError):
+        return False
 
 
 def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None = None) -> QuarantineSummary:
@@ -249,6 +263,7 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 _remove_partial_destination(item.destination)
             except OSError:
                 pass
+            _record_failure(log_path, plan, item, str(error))
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, str(error))
             if progress is not None:
                 progress(index + 1, total)
@@ -258,6 +273,7 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 _remove_partial_destination(item.destination)
             except OSError:
                 pass
+            _record_failure(log_path, plan, item, SAFE_ERROR_MESSAGE)
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, SAFE_ERROR_MESSAGE)
             if progress is not None:
                 progress(index + 1, total)
@@ -281,6 +297,7 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 _remove_partial_destination(item.destination)
             except OSError:
                 pass
+            _record_failure(log_path, plan, item, str(error))
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, str(error))
             if progress is not None:
                 progress(index + 1, total)
@@ -290,6 +307,7 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 _remove_partial_destination(item.destination)
             except OSError:
                 pass
+            _record_failure(log_path, plan, item, SAFE_ERROR_MESSAGE)
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, SAFE_ERROR_MESSAGE)
             if progress is not None:
                 progress(index + 1, total)
@@ -309,7 +327,10 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                     _remove_partial_destination(item.destination)
                 except OSError:
                     pass
-                results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, str(error))
+                _record_failure(log_path, plan, item, str(error))
+                results[index] = MoveOutcome(
+                    item.source, item.destination, MoveStatus.FAILED, str(error)
+                )
                 if progress is not None:
                     progress(index + 1, total)
                 continue
@@ -318,14 +339,28 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                     _remove_partial_destination(item.destination)
                 except OSError:
                     pass
-                results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, SAFE_ERROR_MESSAGE)
+                _record_failure(log_path, plan, item, SAFE_ERROR_MESSAGE)
+                results[index] = MoveOutcome(
+                    item.source,
+                    item.destination,
+                    MoveStatus.FAILED,
+                    SAFE_ERROR_MESSAGE,
+                )
                 if progress is not None:
                     progress(index + 1, total)
                 continue
+
+            _sync_directory(item.destination.parent)
             try:
                 _remove_source(item.source)
             except Exception:
-                results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, REMOVE_ERROR_MESSAGE)
+                _record_failure(log_path, plan, item, REMOVE_ERROR_MESSAGE)
+                results[index] = MoveOutcome(
+                    item.source,
+                    item.destination,
+                    MoveStatus.FAILED,
+                    REMOVE_ERROR_MESSAGE,
+                )
                 if progress is not None:
                     progress(index + 1, total)
                 continue
@@ -357,7 +392,7 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
 def _revalidate_source(path: Path, expected: SourceIdentity) -> None:
     """Reject a source that no longer matches its scanned identity."""
     try:
-        if path.is_symlink():
+        if path.is_symlink() or is_windows_reparse_point(path):
             raise QuarantineError("The source file changed after it was scanned.")
         if not path.is_file():
             raise QuarantineError("The source file changed after it was scanned.")
@@ -388,6 +423,8 @@ def _copy_verified(source: Path, destination: Path, expected: SourceIdentity) ->
                     if not chunk:
                         break
                     dst.write(chunk)
+            dst.flush()
+            os.fsync(dst.fileno())
         byte_count = 0
         digest = hashlib.sha256()
         with destination.open("rb") as dst:
@@ -424,10 +461,32 @@ def _remove_source(source: Path) -> None:
     os.unlink(source)
 
 
+def _sync_directory(directory: Path) -> None:
+    """Best-effort sync of a directory entry on supported platforms."""
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
 def _write_move_log_records(log_path: Path, records: list[dict[str, Any]]) -> None:
     """Append JSONL records to a move log, preserving existing content."""
-    with open(log_path, "a", encoding="utf-8") as file:
+    if log_path.is_symlink() or (
+        log_path.exists() and is_windows_reparse_point(log_path)
+    ):
+        raise QuarantineError("Symbolic links are not accepted as move logs.")
+    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(log_path, flags, 0o600)
+    with os.fdopen(descriptor, "a", encoding="utf-8") as file:
         for record in records:
             file.write(json.dumps(record, separators=(",", ":")) + "\n")
         file.flush()
         os.fsync(file.fileno())
+    _sync_directory(log_path.parent)

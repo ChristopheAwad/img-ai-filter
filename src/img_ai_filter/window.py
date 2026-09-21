@@ -65,17 +65,21 @@ DEFAULT_SERVER_URL = "http://192.168.0.239:5001/v1/"
 
 
 def _quarantine_confirm_parts(
-    paths: Iterable[str], folder: str
+    items: Iterable[tuple[str, str]], folder: str
 ) -> tuple[str, str, str]:
-    path_list = [str(path) for path in paths]
-    count = len(path_list)
+    item_list = [(str(source), str(destination)) for source, destination in items]
+    count = len(item_list)
     word = "file" if count == 1 else "files"
     heading = (
         f"Move {count} checked {word} to the quarantine folder {folder}? "
         "The transfer is a verified byte-for-byte copy, and a source file "
         "that changes after scanning is left in place."
     )
-    return "Move checked files to quarantine?", heading, "\n".join(path_list)
+    detailed = "\n".join(
+        f"Source: {source}\nDestination: {destination}"
+        for source, destination in item_list
+    )
+    return "Move checked files to quarantine?", heading, detailed
 
 
 class _QSettingsStore:
@@ -715,7 +719,7 @@ class MainWindow(QMainWindow):
         source_root = self._selected_folder
         quarantine_root = self._quarantine_folder
         try:
-            build_quarantine_plan(source_root, quarantine_root, checked)
+            plan = build_quarantine_plan(source_root, quarantine_root, checked)
         except QuarantineError as error:
             QMessageBox.warning(self, "Quarantine", str(error))
             return
@@ -725,7 +729,10 @@ class MainWindow(QMainWindow):
         if self._confirm_quarantine is not None:
             accepted = bool(self._confirm_quarantine(paths, folder))
         else:
-            title, heading, detailed = _quarantine_confirm_parts(paths, folder)
+            items = tuple(
+                (str(item.source), str(item.destination)) for item in plan.items
+            )
+            title, heading, detailed = _quarantine_confirm_parts(items, folder)
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Icon.Question)
             box.setWindowTitle(title)

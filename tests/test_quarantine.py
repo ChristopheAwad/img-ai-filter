@@ -990,3 +990,231 @@ def test_module_has_no_gui_or_network_dependency() -> None:
     assert "http" not in source
     assert "socket" not in source
     assert "shutil.move" not in source
+
+
+# ---------------------------------------------------------------------------
+# Reviewer follow-up: terminal failed records, destination durability, log
+# path safety, root-path overlap, reparse points
+# ---------------------------------------------------------------------------
+
+
+def test_changed_source_logs_a_failed_record(tmp_path: Path) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+    path = source_root / "a.png"
+    path.write_bytes(b"different-length-content")
+
+    summary = execute_quarantine_plan(plan)
+
+    assert summary.failed_count == 1
+    records = _read_lines(quarantine_root)
+    assert [record["event"] for record in records] == ["planned", "failed"]
+    assert records[1]["source"] == str(path)
+    assert records[1]["destination"] == str(quarantine_root / "a.png")
+
+
+def test_copy_failure_logs_a_failed_record_and_keeps_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+
+    def failed_copy(source, destination, expected):
+        raise QuarantineError("The file could not be copied safely.")
+
+    monkeypatch.setattr(quarantine_mod, "_copy_verified", failed_copy)
+
+    summary = execute_quarantine_plan(plan)
+
+    assert summary.failed_count == 1
+    records = _read_lines(quarantine_root)
+    assert [record["event"] for record in records] == ["planned", "failed"]
+    assert (source_root / "a.png").read_bytes() == b"aaa"
+
+
+def test_removal_failure_logs_a_failed_record(tmp_path: Path, monkeypatch) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+    def failed_remove(source):
+        raise OSError("remove failed")
+
+    monkeypatch.setattr(quarantine_mod, "_remove_source", failed_remove)
+
+    summary = execute_quarantine_plan(plan)
+
+    assert summary.failed_count == 1
+    records = _read_lines(quarantine_root)
+    assert [record["event"] for record in records] == ["planned", "failed"]
+    assert (source_root / "a.png").read_bytes() == b"aaa"
+    assert (quarantine_root / "a.png").read_bytes() == b"aaa"
+
+
+def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> None:
+    if not Path("/proc/self/fd").exists():
+        pytest.skip("File-descriptor path resolution is not available here")
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+    destination = quarantine_root / "a.png"
+    events: list[tuple[str, str]] = []
+    real_fsync = os.fsync
+
+    def recording_fsync(fd):
+        try:
+            resolved = os.path.realpath(f"/proc/self/fd/{fd}")
+        except OSError:
+            resolved = "<unknown>"
+        events.append(("fsync", resolved))
+        return real_fsync(fd)
+
+    real_unlink = os.unlink
+
+    def recording_unlink(path):
+        events.append(("unlink", str(path)))
+        return real_unlink(path)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    monkeypatch.setattr(os, "unlink", recording_unlink)
+
+    execute_quarantine_plan(plan)
+
+    fsynced = [path for kind, path in events if kind == "fsync"]
+    assert str(destination) in fsynced
+    assert str(destination.parent) in fsynced
+    unlink_index = next(
+        i for i, (kind, path) in enumerate(events) if kind == "unlink"
+    )
+    destination_fsync_index = next(
+        i for i, (kind, path) in enumerate(events)
+        if kind == "fsync" and str(path) == str(destination)
+    )
+    assert destination_fsync_index < unlink_index
+    assert not (source_root / "a.png").exists()
+    assert (quarantine_root / "a.png").read_bytes() == b"aaa"
+
+
+def test_symlinked_move_log_is_rejected_and_the_link_target_is_safe(
+    tmp_path: Path,
+) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+    victim = _file(tmp_path / "victim.txt", b"keep me safe")
+    log_path = quarantine_root / MOVE_LOG_NAME
+    try:
+        log_path.symlink_to(victim)
+    except OSError as error:
+        pytest.skip(f"Cannot create symbolic links: {error}")
+
+    with pytest.raises(QuarantineError):
+        execute_quarantine_plan(plan)
+
+    assert victim.read_bytes() == b"keep me safe"
+    assert (source_root / "a.png").read_bytes() == b"aaa"
+    assert not (quarantine_root / "a.png").exists()
+
+
+def test_broken_symlinked_move_log_is_rejected(tmp_path: Path) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+    log_path = quarantine_root / MOVE_LOG_NAME
+    try:
+        log_path.symlink_to(tmp_path / "nowhere")
+    except OSError as error:
+        pytest.skip(f"Cannot create symbolic links: {error}")
+
+    with pytest.raises(QuarantineError):
+        execute_quarantine_plan(plan)
+
+    assert (source_root / "a.png").read_bytes() == b"aaa"
+    assert not (quarantine_root / "a.png").exists()
+
+
+def test_missing_move_log_is_not_treated_as_a_reparse_point(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+
+    def windows_style_reparse_check(path):
+        return not Path(path).exists()
+
+    monkeypatch.setattr(
+        quarantine_mod,
+        "is_windows_reparse_point",
+        windows_style_reparse_check,
+    )
+
+    summary = execute_quarantine_plan(plan)
+
+    assert summary.moved_count == 1
+    assert not (source_root / "a.png").exists()
+    assert (quarantine_root / "a.png").read_bytes() == b"aaa"
+
+
+def test_roots_at_filesystem_root_reject_overlap(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("Filesystem-root overlap is checked on POSIX systems")
+    with pytest.raises(QuarantineError):
+        validate_quarantine_roots("/", tmp_path)
+    with pytest.raises(QuarantineError):
+        validate_quarantine_roots(tmp_path, "/")
+
+
+def test_plan_rejects_reparse_point_candidate(tmp_path: Path, monkeypatch) -> None:
+    source_root = tmp_path / "source"
+    candidate_path = _file(source_root / "a.png", b"aaa")
+    quarantine = _quarantine_root(tmp_path)
+
+    def fake_reparse(path):
+        return str(path.resolve()) == str(candidate_path.resolve())
+
+    monkeypatch.setattr(quarantine_mod, "is_windows_reparse_point", fake_reparse)
+
+    with pytest.raises(QuarantineError):
+        build_quarantine_plan(
+            source_root, quarantine, [_candidate(candidate_path)]
+        )
+
+
+def test_reparse_point_source_fails_revalidation(tmp_path: Path, monkeypatch) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("a.png"): b"aaa"}
+    )
+
+    def fake_reparse(path):
+        return str(path) == str(source_root / "a.png")
+
+    monkeypatch.setattr(quarantine_mod, "is_windows_reparse_point", fake_reparse)
+
+    summary = execute_quarantine_plan(plan)
+
+    assert summary.failed_count == 1
+    assert (source_root / "a.png").read_bytes() == b"aaa"
+    assert not (quarantine_root / "a.png").exists()
+
+
+def test_reparse_point_destination_parent_fails_execution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan, source_root, quarantine_root, _ = _make_plan(
+        tmp_path, {Path("sub/a.png"): b"aaa"}
+    )
+    (quarantine_root / "sub").mkdir()
+
+    def fake_reparse(path):
+        return str(path) == str(quarantine_root / "sub")
+
+    monkeypatch.setattr(quarantine_mod, "is_windows_reparse_point", fake_reparse)
+
+    summary = execute_quarantine_plan(plan)
+
+    assert summary.failed_count == 1
+    assert (source_root / "sub" / "a.png").read_bytes() == b"aaa"
+    assert not (quarantine_root / "sub" / "a.png").exists()
+    assert (quarantine_root / "sub").is_dir()

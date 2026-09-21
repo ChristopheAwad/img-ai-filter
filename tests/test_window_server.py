@@ -706,14 +706,64 @@ def test_quarantine_cannot_be_placed_inside_source_folder(
     assert QUARANTINE_FOLDER_KEY not in store.values
 
 
+def test_default_confirm_uses_source_and_destination_pairs(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_dir = tmp_path / "source"
+    source_file = source_dir / "inner" / "shot.png"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(b"scan bytes")
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(
+            candidates=(candidate,),
+            discovered=1,
+            analyzed=1,
+        ),
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, source_dir)
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.results_list.count() == 1)
+    window._quarantine_folder = quarantine
+    captured = {}
+
+    def record_parts(items, folder):
+        captured["items"] = tuple(items)
+        captured["folder"] = folder
+        return ("title", "heading", "detailed")
+
+    monkeypatch.setattr(window_module, "_quarantine_confirm_parts", record_parts)
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.DialogCode.Accepted
+    )
+    monkeypatch.setattr(QMessageBox, "clickedButton", lambda self: None)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window.move_quarantine_button.click()
+
+    assert captured["folder"] == str(quarantine)
+    assert captured["items"] == (
+        (str(source_file), str(quarantine / "inner" / "shot.png")),
+    )
+
+
 def test_quarantine_confirm_parts_mention_folder_and_every_path() -> None:
     title, heading, detailed = window_module._quarantine_confirm_parts(
-        ("a.png", "b.png"), "/q"
+        (("a.png", "q/a.png"), ("b.png", "q/b.png")), "/q"
     )
     assert title == "Move checked files to quarantine?"
     assert "2" in heading
     assert "/q" in heading
-    assert detailed == "a.png\nb.png"
+    assert "a.png" in detailed
+    assert "q/a.png" in detailed
+    assert "b.png" in detailed
+    assert "q/b.png" in detailed
 
 
 def test_declining_quarantine_confirm_changes_nothing(
