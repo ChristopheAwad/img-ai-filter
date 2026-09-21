@@ -95,9 +95,9 @@ python -m img_ai_filter
 4. Select a test folder with **Select Folder**.
 5. Select **Scan Folder**, read the transfer warning, and consent only if the
    displayed destination is correct.
-6. Optionally select **Select Quarantine Folder**, review the previews, check
-   candidates, and choose **Move Checked to Quarantine** after reading the exact
-   confirmation details.
+6. Optionally select **Select Quarantine Folder**, review the previews, use
+   **Select All** or **Clear All** if useful, and choose **Move Checked to
+   Quarantine** after reading the exact confirmation details.
 7. Select **Activity History** while the app is idle to inspect scan and
    quarantine events or clear the saved app history.
 
@@ -108,6 +108,11 @@ test has discovered a model.
 During an approved scan, supported images are resized and converted to PNG in
 memory, then sent sequentially. The app shows only screenshot/meme-style
 candidates. It does not rename, move, delete, or edit source images.
+
+Every displayed candidate starts unchecked. The bulk-selection control changes
+only the current review state: it shows **Select All** while any row is
+unchecked, and **Clear All** when every row is checked. A rescan replaces prior
+rows and every new candidate starts unchecked.
 
 ## Tests
 

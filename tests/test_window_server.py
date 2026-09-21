@@ -1583,3 +1583,640 @@ def test_history_dialog_clear_failure_retains_rows_and_hides_private_error(
     assert dialog.tree.topLevelItemCount() == 1
     assert warnings == ["Activity history could not be cleared."]
     assert "private" not in warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# Bulk selection (Select All / Clear All)
+# ---------------------------------------------------------------------------
+
+
+def _bulk_window(qtbot, monkeypatch, tmp_path: Path, candidates):
+    return _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=candidates
+    )
+
+
+def test_selection_button_starts_disabled_with_select_all(qtbot) -> None:
+    window = MainWindow(settings_store=MemoryStore(), initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    assert window.selection_button.text() == "Select All"
+    assert not window.selection_button.isEnabled()
+
+
+def test_empty_completed_scan_leaves_selection_disabled(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(
+            discovered=1, analyzed=1, ordinary=1
+        ),
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: "1 ordinary" in window.status_label.text())
+
+    assert window.results_list.count() == 0
+    assert window.selection_button.text() == "Select All"
+    assert not window.selection_button.isEnabled()
+
+
+@pytest.mark.parametrize(
+    "state",
+    [ScanState.FAILED, ScanState.CANCELLED],
+)
+def test_terminal_scan_without_rows_leaves_selection_disabled(
+    qtbot, monkeypatch, tmp_path: Path, state: ScanState
+) -> None:
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(state, discovered=1, failed=1),
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+    assert window.results_list.count() == 0
+    assert window.selection_button.text() == "Select All"
+    assert not window.selection_button.isEnabled()
+
+
+def test_worker_exception_leaves_selection_disabled(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    def run_scan(*args, **kwargs):
+        raise RuntimeError("private failure")
+
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=run_scan,
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+    assert window.results_list.count() == 0
+    assert not window.selection_button.isEnabled()
+    assert "private failure" not in window.status_label.text()
+
+
+@pytest.mark.parametrize("confidence", [0.0, 0.8, 0.800001, 0.9, 1.0])
+def test_candidates_start_unchecked_for_any_confidence(
+    qtbot, monkeypatch, tmp_path: Path, confidence: float
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = ScanCandidate(
+        source_file,
+        "screenshot",
+        "Visual reason for screenshot.",
+        confidence,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+    )
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+
+    item = window.results_list.item(0)
+    assert item.checkState() == Qt.CheckState.Unchecked
+    assert window.selection_button.text() == "Select All"
+    assert window.selection_button.isEnabled()
+    assert not window.move_quarantine_button.isEnabled()
+
+
+def test_mixed_rows_preserve_order_data_and_unchecked_state(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    candidate_a = _candidate(source_a)
+    candidate_b = _candidate(source_b, category="image_macro")
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (candidate_a, candidate_b)
+    )
+
+    assert window.results_list.count() == 2
+    assert window.results_list.item(0).data(Qt.ItemDataRole.UserRole) is candidate_a
+    assert window.results_list.item(1).data(Qt.ItemDataRole.UserRole) is candidate_b
+    assert window.selection_button.text() == "Select All"
+    assert window.selection_button.isEnabled()
+
+
+def test_manual_check_of_last_row_switches_to_clear_all(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    window, _ = _bulk_window(
+        qtbot,
+        monkeypatch,
+        tmp_path,
+        (_candidate(source_a), _candidate(source_b)),
+    )
+
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    assert window.selection_button.text() == "Select All"
+    assert window.selection_button.isEnabled()
+
+    window.results_list.item(1).setCheckState(Qt.CheckState.Checked)
+    assert window.selection_button.text() == "Clear All"
+    assert window.selection_button.isEnabled()
+
+    window.results_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    assert window.selection_button.text() == "Select All"
+    assert window.selection_button.isEnabled()
+
+
+def test_select_all_checks_every_row_and_switches_to_clear_all(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    window, _ = _bulk_window(
+        qtbot,
+        monkeypatch,
+        tmp_path,
+        (_candidate(source_a), _candidate(source_b)),
+    )
+
+    window.selection_button.click()
+
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.results_list.item(1).checkState() == Qt.CheckState.Checked
+    assert window.selection_button.text() == "Clear All"
+
+
+def test_clear_all_unchecks_every_row_and_switches_to_select_all(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    window, _ = _bulk_window(
+        qtbot,
+        monkeypatch,
+        tmp_path,
+        (_candidate(source_a), _candidate(source_b)),
+    )
+    window.selection_button.click()
+    assert window.selection_button.text() == "Clear All"
+
+    window.selection_button.click()
+
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
+    assert window.results_list.item(1).checkState() == Qt.CheckState.Unchecked
+    assert window.selection_button.text() == "Select All"
+
+
+def test_single_row_toggles_in_both_directions(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "a.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_candidate(source_file),)
+    )
+
+    window.selection_button.click()
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.selection_button.text() == "Clear All"
+
+    window.selection_button.click()
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
+    assert window.selection_button.text() == "Select All"
+
+
+def test_repeated_clicks_preserve_candidate_objects_and_order(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    candidate_a = _candidate(source_a)
+    candidate_b = _candidate(source_b, category="image_macro")
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (candidate_a, candidate_b)
+    )
+
+    for _ in range(3):
+        window.selection_button.click()
+
+    assert window.results_list.count() == 2
+    assert window.results_list.item(0).data(Qt.ItemDataRole.UserRole) is candidate_a
+    assert window.results_list.item(1).data(Qt.ItemDataRole.UserRole) is candidate_b
+
+
+def test_clicking_disabled_empty_control_changes_nothing(qtbot) -> None:
+    window = MainWindow(settings_store=MemoryStore(), initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    window.selection_button.click()
+
+    assert window.results_list.count() == 0
+    assert window.selection_button.text() == "Select All"
+    assert not window.selection_button.isEnabled()
+
+
+def test_bulk_selection_works_without_quarantine_and_keeps_move_disabled(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "a.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_candidate(source_file),)
+    )
+
+    window.selection_button.click()
+
+    assert window.selection_button.text() == "Clear All"
+    assert not window.move_quarantine_button.isEnabled()
+    assert "No quarantine folder" in window.quarantine_label.text()
+
+
+def test_bulk_selection_updates_move_readiness_with_quarantine(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "a.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_candidate(source_file),)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    assert not window.move_quarantine_button.isEnabled()
+
+    window.selection_button.click()
+    assert window.selection_button.text() == "Clear All"
+    assert window.move_quarantine_button.isEnabled()
+
+    window.selection_button.click()
+    assert window.selection_button.text() == "Select All"
+    assert not window.move_quarantine_button.isEnabled()
+
+
+def test_connection_operation_disables_selection_without_changing_checks(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    entered = Event()
+    release = Event()
+
+    def discover(config, transport):
+        entered.set()
+        release.wait(2)
+        return KoboldCppInfo("1.0", "model", True, False)
+
+    source_file = tmp_path / "source" / "a.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_candidate(source_file),)
+    )
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    assert window.selection_button.text() == "Clear All"
+    window._discover = discover
+
+    window.test_connection_button.click()
+    qtbot.waitUntil(entered.is_set)
+
+    assert not window.selection_button.isEnabled()
+    assert window.selection_button.text() == "Clear All"
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+
+    release.set()
+    qtbot.waitUntil(lambda: window.test_connection_button.isEnabled())
+
+    assert window.selection_button.isEnabled()
+    assert window.selection_button.text() == "Clear All"
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+
+
+def test_scan_start_clears_rows_and_disables_selection(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    entered = Event()
+
+    def run_scan(*args, **kwargs):
+        entered.set()
+        kwargs["cancel_event"].wait(2)
+        return _summary(ScanState.CANCELLED)
+
+    source_file = tmp_path / "source" / "a.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_candidate(source_file),)
+    )
+    window.selection_button.click()
+    assert window.selection_button.text() == "Clear All"
+    window._run_scan = run_scan
+
+    window.scan_button.click()
+    qtbot.waitUntil(entered.is_set)
+
+    assert window.results_list.count() == 0
+    assert window.selection_button.text() == "Select All"
+    assert not window.selection_button.isEnabled()
+
+    window.cancel_button.click()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+
+def test_rescan_discards_manual_checks_and_starts_unchecked(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "a.png"
+    candidate = _candidate(source_file)
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+    window.selection_button.click()
+    assert window.selection_button.text() == "Clear All"
+
+    window._run_scan = lambda *args, **kwargs: _summary(
+        candidates=(candidate,), discovered=1, analyzed=1
+    )
+    window.scan_button.click()
+    qtbot.waitUntil(
+        lambda: window.results_list.count() == 1 and window.scan_button.isEnabled()
+    )
+
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
+    assert window.selection_button.text() == "Select All"
+    assert window.selection_button.isEnabled()
+
+
+def test_review_state_is_not_restored_after_restart(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+    source_file = tmp_path / "source" / "a.png"
+    candidate = _candidate(source_file)
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(
+            candidates=(candidate,), discovered=1, analyzed=1
+        ),
+        confirm_transfer=lambda *_: True,
+        settings_store=store,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path / "source")
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.results_list.count() == 1)
+    window.selection_button.click()
+    assert window.selection_button.text() == "Clear All"
+
+    restarted = MainWindow(
+        settings_store=store,
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+    )
+    qtbot.addWidget(restarted)
+
+    assert restarted.results_list.count() == 0
+    assert restarted.selection_button.text() == "Select All"
+    assert not restarted.selection_button.isEnabled()
+
+
+def test_bulk_selection_writes_no_settings_history_or_source_changes(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "a.png"
+    candidate = _candidate(source_file)
+    window, source_dir = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+    store = window._settings_store
+    values_before = dict(store.values)
+    history_before = load_activity_history(store)
+    source_before = source_file.read_bytes()
+
+    window.selection_button.click()
+    window.selection_button.click()
+
+    assert dict(store.values) == values_before
+    assert load_activity_history(store) == history_before
+    assert source_file.read_bytes() == source_before
+    assert list(source_dir.iterdir()) == [source_file]
+
+
+def test_select_all_then_clearing_one_row_excludes_it_from_move(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    window, _ = _bulk_window(
+        qtbot,
+        monkeypatch,
+        tmp_path,
+        (_candidate(source_a), _candidate(source_b)),
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.selection_button.click()
+    window.results_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+    confirmations = []
+
+    def on_confirm(paths, folder):
+        confirmations.append((tuple(paths), folder))
+        return False
+
+    window._confirm_quarantine = on_confirm
+    window.move_quarantine_button.click()
+
+    assert confirmations == [((str(source_a),), str(quarantine))]
+
+
+def test_clear_all_disables_move_and_prevents_request(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_candidate(source_a),)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.selection_button.click()
+    assert window.move_quarantine_button.isEnabled()
+
+    window.selection_button.click()
+
+    assert window.selection_button.text() == "Select All"
+    assert not window.move_quarantine_button.isEnabled()
+    runs = []
+    window._run_quarantine = lambda *args, **kwargs: runs.append(args)
+    window.move_quarantine_button.click()
+    assert runs == []
+
+
+def test_quarantine_start_disables_selection_without_changing_checks(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    entered = Event()
+    release = Event()
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        entered.set()
+        release.wait(2)
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(
+                    source_file,
+                    quarantine / "shot.png",
+                    MoveStatus.MOVED,
+                    "",
+                ),
+            ),
+            QuarantineState.COMPLETED,
+        )
+
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.selection_button.click()
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(entered.is_set)
+
+    assert not window.selection_button.isEnabled()
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+
+    release.set()
+    qtbot.waitUntil(lambda: window._thread is None)
+
+    assert window.results_list.count() == 0
+    assert window.selection_button.text() == "Select All"
+    assert not window.selection_button.isEnabled()
+
+
+def test_partial_move_keeps_failed_rows_checked_and_shows_clear_all(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate_a = _candidate(source_a)
+    candidate_b = _candidate(source_b, category="image_macro")
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(source_a, quarantine / "a.png", MoveStatus.MOVED, ""),
+                MoveOutcome(
+                    source_b,
+                    quarantine / "b.png",
+                    MoveStatus.FAILED,
+                    "The source file changed after it was scanned.",
+                ),
+            ),
+            QuarantineState.COMPLETED_WITH_FAILURES,
+        )
+
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (candidate_a, candidate_b)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.selection_button.click()
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(
+        lambda: "Quarantine finished with failures" in window.status_label.text()
+    )
+
+    assert window.results_list.count() == 1
+    assert window.results_list.item(0).data(Qt.ItemDataRole.UserRole) is candidate_b
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.selection_button.text() == "Clear All"
+    assert window.selection_button.isEnabled()
+
+
+def test_partial_move_with_mixed_remaining_rows_shows_select_all(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    source_c = tmp_path / "source" / "c.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate_a = _candidate(source_a)
+    candidate_b = _candidate(source_b, category="image_macro")
+    candidate_c = _candidate(source_c, category="comic")
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(source_a, quarantine / "a.png", MoveStatus.MOVED, ""),
+                MoveOutcome(
+                    source_b,
+                    quarantine / "b.png",
+                    MoveStatus.FAILED,
+                    "The source file changed after it was scanned.",
+                ),
+            ),
+            QuarantineState.COMPLETED_WITH_FAILURES,
+        )
+
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (candidate_a, candidate_b, candidate_c)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window.results_list.item(1).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(
+        lambda: "Quarantine finished with failures" in window.status_label.text()
+    )
+
+    assert window.results_list.count() == 2
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.results_list.item(1).checkState() == Qt.CheckState.Unchecked
+    assert window.selection_button.text() == "Select All"
+    assert window.selection_button.isEnabled()
+
+
+def test_move_worker_error_preserves_rows_and_selection(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+
+    def on_move(*args, **kwargs):
+        raise RuntimeError("private move failure")
+
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.selection_button.click()
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(lambda: "could not be completed" in window.status_label.text())
+
+    assert window.results_list.count() == 1
+    assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
+    assert window.selection_button.text() == "Clear All"
+    assert window.selection_button.isEnabled()
+    assert "private move failure" not in window.status_label.text()

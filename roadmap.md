@@ -261,6 +261,42 @@ Implementation order:
 9. Run the complete network-blocked suite and inspect privacy and generated artifacts.
 10. Complete manual desktop verification before any Git operation.
 
+### F-007: Candidate Bulk Selection
+
+- **Status:** in progress
+- **Tier:** Tier 1, review usability
+- **Effort:** Small because one toggle button reuses the existing review rows and control-state update path
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
+- **Likely implementation files:** main window, GUI review tests, and documentation
+- **Depends on:** shipped F-001/F-003 candidate rows and the F-004 checked-row selection contract
+- **Blocks:** none; it improves review speed before F-008 and Milestone 6
+
+Add one bulk-selection control beside the result status. It selects every current candidate when any row is unchecked and clears every row when all rows are checked. Every new scan candidate remains unchecked. Bulk changes touch only Qt check states and never start a scan or move, change settings, write history, or alter a source file.
+
+Dependency graph:
+
+```text
+F-001 candidate rows shipped
+        |
+        v
+F-007 bulk selection button
+        |
+        v
+F-004 quarantine selection and confirmation unchanged
+```
+
+Implementation order:
+
+1. Approve the test-first plan in `feature.md`.
+2. Record the network-blocked regression baseline.
+3. Write failing empty-state, unchecked-default, and bulk-state GUI tests.
+4. Write failing lifecycle, rescan, quarantine, and side-effect tests.
+5. Implement the button, control-state calculation, and toggle handler in the main window.
+6. Run focused GUI, scan, and quarantine tests.
+7. Update durable documentation.
+8. Run the complete offline suite and inspect artifacts and privacy.
+9. Complete manual desktop verification before any Git operation.
+
 ## Milestone 1: Desktop Foundation and Folder Scan
 
 **Status:** shipped 2026-09-19 (PR #1). Native folder-picker follow-up shipped 2026-09-19 (PR #2).
@@ -298,6 +334,10 @@ Thumbnails are not required for this milestone. They can be reconsidered after u
 
 Success: A user explicitly starts a scan and reviews only explained trash candidates without changing any source file.
 
+The unchecked-default requirement above remains current. F-007 adds a bulk
+**Select All**/**Clear All** control without changing the unchecked default:
+every candidate starts unchecked.
+
 ## Milestone 3: KoboldCpp Candidate Detection
 
 **Status:** shipped 2026-09-20 (PR #5) as F-003.
@@ -333,14 +373,21 @@ Success: A user can move confirmed files to quarantine without deletion or silen
 
 ## Milestone 5: Local Review Labels
 
-- Record user-confirmed labels locally.
-- Do not store image content in the label records.
-- Make label writes resilient to interruption and invalid prior data.
-- Provide a clear description of what is stored and where.
+**Status:** scrapped 2026-09-21 — the user does not need local review-label collection and chose to prioritize review controls and release readiness instead
 
-Success: Review decisions can support later classifier evaluation without network access.
+The proposed milestone would have stored user-confirmed labels locally for later
+classifier evaluation without storing image content. It was removed from the
+active product scope before implementation. No label records, settings, or UI
+will be added.
+
+Postmortem: the application uses a user-managed KoboldCpp model and the user does
+not need to build a local evaluation dataset from review decisions. The feature
+would add persistence and privacy obligations without improving the selected
+release workflow.
 
 ## Milestone 6: Cross-Platform Release Readiness
+
+**Status:** planned after F-007 and F-008. The user confirmed this milestone is important.
 
 - Test the complete workflow on Linux, Windows, and macOS.
 - Package Python, PySide6, Pillow, and other required local assets.

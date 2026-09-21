@@ -444,6 +444,17 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Select a folder to begin.")
         self.status_label.setObjectName("status")
 
+        self.selection_button = QPushButton("Select All")
+        self.selection_button.setObjectName("secondaryButton")
+        self.selection_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.selection_button.setEnabled(False)
+        self.selection_button.clicked.connect(self._toggle_selection)
+
+        results_status_row = QHBoxLayout()
+        results_status_row.setSpacing(12)
+        results_status_row.addWidget(self.status_label, 1)
+        results_status_row.addWidget(self.selection_button)
+
         self.results_list = QListWidget()
         self.results_list.setObjectName("results")
         self.results_list.setAlternatingRowColors(True)
@@ -464,7 +475,7 @@ class MainWindow(QMainWindow):
         content.addLayout(quarantine_row)
         content.addWidget(self.move_log_label)
         content.addSpacing(6)
-        content.addWidget(self.status_label)
+        content.addLayout(results_status_row)
         content.addWidget(self.results_list, 1)
 
         root_layout = QVBoxLayout()
@@ -534,7 +545,33 @@ class MainWindow(QMainWindow):
             and move_roots_ready
             and self._any_checked()
         )
+        selection_text, selection_ready = self._selection_button_state()
+        self.selection_button.setText(selection_text)
+        self.selection_button.setEnabled(not active and selection_ready)
         self.activity_history_button.setEnabled(not active)
+
+    def _selection_button_state(self) -> tuple[str, bool]:
+        count = self.results_list.count()
+        if count == 0:
+            return "Select All", False
+        for index in range(count):
+            if self.results_list.item(index).checkState() != Qt.CheckState.Checked:
+                return "Select All", True
+        return "Clear All", True
+
+    def _toggle_selection(self) -> None:
+        count = self.results_list.count()
+        if count == 0:
+            return
+        text, _ = self._selection_button_state()
+        target = (
+            Qt.CheckState.Unchecked
+            if text == "Clear All"
+            else Qt.CheckState.Checked
+        )
+        for index in range(count):
+            self.results_list.item(index).setCheckState(target)
+        self._update_controls()
 
     def _any_checked(self) -> bool:
         for index in range(self.results_list.count()):
