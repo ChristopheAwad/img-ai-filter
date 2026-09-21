@@ -4,7 +4,7 @@
 
 Plan written and approved by the user on 2026-09-21. Test-first implementation,
 automated verification, and desktop GUI verification are complete. The user
-approved the desktop checklist on 2026-09-21.
+approved the desktop checklist on 2026-09-21. Shipped in PR #9 on 2026-09-21.
 
 The worktree was clean before this plan was written:
 
@@ -36,7 +36,7 @@ Complete offline verification after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-877 passed, 4 skipped, 1 warning in 59.38s
+882 passed, 4 skipped, 1 warning in 57.50s
 
 git diff --check
 clean

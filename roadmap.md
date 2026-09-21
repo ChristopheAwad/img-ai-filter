@@ -299,7 +299,7 @@ Implementation order:
 
 ### F-009: Confidence-Based Candidate Selection
 
-- **Status:** in progress; automated implementation and desktop verification complete
+- **Status:** shipped 2026-09-21 (PR #9)
 - **Tier:** Tier 1, review usability
 - **Effort:** Medium because an editable threshold adds validated persistence, a settings dialog, scan-lifecycle boundaries, mixed checkbox states, and quarantine-safety regression coverage
 - **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`

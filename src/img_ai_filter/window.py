@@ -67,6 +67,8 @@ from img_ai_filter.scan_workflow import (
 from img_ai_filter.scanner import ScanError, ScanResult, scan_images
 from img_ai_filter.settings import (
     ENDPOINT_URL_KEY,
+    MAX_AUTO_SELECT_CONFIDENCE_PERCENT,
+    MIN_AUTO_SELECT_CONFIDENCE_PERCENT,
     QUARANTINE_FOLDER_KEY,
     SettingsStatus,
     clear_quarantine_folder,
@@ -243,7 +245,10 @@ class CandidateSelectionSettingsDialog(QDialog):
 
         label = QLabel("Automatic-selection confidence threshold")
         self.threshold_spin = QSpinBox()
-        self.threshold_spin.setRange(50, 100)
+        self.threshold_spin.setRange(
+            MIN_AUTO_SELECT_CONFIDENCE_PERCENT, MAX_AUTO_SELECT_CONFIDENCE_PERCENT
+        )
+        label.setBuddy(self.threshold_spin)
         self.threshold_spin.setSuffix("%")
         self.threshold_spin.setValue(threshold)
         field = QHBoxLayout()
