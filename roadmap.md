@@ -263,7 +263,7 @@ Implementation order:
 
 ### F-007: Candidate Bulk Selection
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-21 (PR #8)
 - **Tier:** Tier 1, review usability
 - **Effort:** Small because one toggle button reuses the existing review rows and control-state update path
 - **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
