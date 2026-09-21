@@ -883,6 +883,38 @@ def test_partial_failure_reports_moved_and_skipped_counts(
     assert "1 skipped" in window.status_label.text()
 
 
+def test_moved_row_is_removed_when_candidate_path_has_symlinked_ancestor(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(real_parent, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Cannot create symbolic links: {error}")
+    candidate = _candidate(alias / "shot.png")
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    summary = _move_summary(
+        tmp_path / "quarantine",
+        (
+            MoveOutcome(
+                (real_parent / "shot.png").resolve(),
+                tmp_path / "quarantine" / "shot.png",
+                MoveStatus.MOVED,
+                "",
+            ),
+        ),
+        QuarantineState.COMPLETED,
+    )
+
+    window._finish_quarantine(summary, None)
+
+    assert window.results_list.count() == 0
+
+
 def test_total_failure_reports_clean_message(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:

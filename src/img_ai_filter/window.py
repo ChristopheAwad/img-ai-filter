@@ -774,7 +774,7 @@ class MainWindow(QMainWindow):
         skipped = 0
         for outcome in summary.outcomes:
             if outcome.status is MoveStatus.MOVED:
-                moved.add(os.path.normcase(os.path.abspath(str(outcome.source))))
+                moved.add(os.path.normcase(str(Path(outcome.source).resolve())))
             else:
                 skipped += 1
 
@@ -782,7 +782,7 @@ class MainWindow(QMainWindow):
             item = self.results_list.item(index)
             candidate = item.data(Qt.ItemDataRole.UserRole)
             if candidate is not None and (
-                os.path.normcase(os.path.abspath(str(candidate.path))) in moved
+                os.path.normcase(str(Path(candidate.path).resolve())) in moved
             ):
                 self.results_list.takeItem(index)
 

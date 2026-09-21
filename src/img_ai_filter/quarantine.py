@@ -108,8 +108,8 @@ def validate_quarantine_folder(path) -> Path:
         raise QuarantineError("Symbolic links are not accepted as quarantine folders.")
     if not candidate.is_dir():
         raise QuarantineError("The quarantine folder is not an existing directory.")
-    if not os.access(candidate, os.R_OK | os.X_OK):
-        raise QuarantineError("The quarantine folder is not readable.")
+    if not os.access(candidate, os.R_OK | os.W_OK | os.X_OK):
+        raise QuarantineError("The quarantine folder is not writable.")
     return candidate.resolve()
 
 

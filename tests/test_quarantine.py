@@ -171,6 +171,23 @@ def test_rejects_unreadable_root(tmp_path: Path, monkeypatch) -> None:
         validate_quarantine_roots(tmp_path, quarantine)
 
 
+def test_rejects_quarantine_folder_without_write_access(
+    tmp_path: Path, monkeypatch
+) -> None:
+    checked_flags = []
+
+    def access_without_write(folder, flags):
+        checked_flags.append(flags)
+        return not bool(flags & os.W_OK)
+
+    monkeypatch.setattr(quarantine_mod.os, "access", access_without_write)
+
+    with pytest.raises(QuarantineError):
+        validate_quarantine_folder(tmp_path)
+
+    assert checked_flags == [os.R_OK | os.W_OK | os.X_OK]
+
+
 def test_rejects_empty_or_non_path_input(tmp_path: Path) -> None:
     with pytest.raises(QuarantineError):
         validate_quarantine_roots("", tmp_path)
@@ -1056,9 +1073,9 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
     if not Path("/proc/self/fd").exists():
         pytest.skip("File-descriptor path resolution is not available here")
     plan, source_root, quarantine_root, _ = _make_plan(
-        tmp_path, {Path("a.png"): b"aaa"}
+        tmp_path, {Path("nested/a.png"): b"aaa"}
     )
-    destination = quarantine_root / "a.png"
+    destination = quarantine_root / "nested" / "a.png"
     events: list[tuple[str, str]] = []
     real_fsync = os.fsync
 
@@ -1083,7 +1100,6 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
 
     fsynced = [path for kind, path in events if kind == "fsync"]
     assert str(destination) in fsynced
-    assert str(destination.parent) in fsynced
     unlink_index = next(
         i for i, (kind, path) in enumerate(events) if kind == "unlink"
     )
@@ -1092,8 +1108,13 @@ def test_destination_is_fsynced_before_source_removal(tmp_path, monkeypatch) -> 
         if kind == "fsync" and str(path) == str(destination)
     )
     assert destination_fsync_index < unlink_index
-    assert not (source_root / "a.png").exists()
-    assert (quarantine_root / "a.png").read_bytes() == b"aaa"
+    parent_fsync_index = next(
+        i for i, (kind, path) in enumerate(events)
+        if kind == "fsync" and str(path) == str(destination.parent)
+    )
+    assert parent_fsync_index < unlink_index
+    assert not (source_root / "nested" / "a.png").exists()
+    assert destination.read_bytes() == b"aaa"
 
 
 def test_symlinked_move_log_is_rejected_and_the_link_target_is_safe(

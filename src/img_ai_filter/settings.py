@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 import configparser
 from dataclasses import dataclass
 from enum import Enum, auto
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from img_ai_filter.endpoint import (
     build_endpoint_config,
     build_vision_endpoint_config,
 )
+from img_ai_filter.scanner import is_windows_reparse_point
 
 ENDPOINT_URL_KEY = "endpoint_url"
 ENDPOINT_MODEL_KEY = "endpoint_model"
@@ -245,11 +247,13 @@ def load_quarantine_folder(
 
 
 def _default_quarantine_folder_check(folder: Path) -> bool:
-    """Reject missing, non-directory, and symbolic-link paths."""
+    """Reject unavailable or unsafe stored quarantine folders."""
     try:
-        if folder.is_symlink():
+        if folder.is_symlink() or is_windows_reparse_point(folder):
             return False
-        return folder.is_dir()
+        return folder.is_dir() and os.access(
+            folder, os.R_OK | os.W_OK | os.X_OK
+        )
     except OSError:
         return False
 
