@@ -3,8 +3,8 @@
 ## Status
 
 Implementation is complete and the full automated suite passes. The user
-approved continuing the plan on 2026-09-20 after the previous session stopped
-mid-GUI in `window.py`. Waiting on the manual desktop GUI checklist below.
+approved the desktop GUI checklist on 2026-09-20, and the feature shipped on
+2026-09-20 (PR #6).
 
 F-001 and F-003 shipped on 2026-09-20 in PR #5. This plan covers the next two
 selected roadmap features:
@@ -32,8 +32,7 @@ GUI-neutral `quarantine.py` planner/executor with durable JSONL move log;
 persisted quarantine-folder settings; and the full quarantine and thumbnail
 GUI in `window.py` (folder picker, readiness gating, confirmation, background
 worker, progress, result reconciliation, thumbnails, and safe close behavior).
-The only work left is the user approval gate and any Git/P-R step that the
-user explicitly requests.
+The manual desktop GUI checklist was approved by the user on 2026-09-20.
 
 ## Goals
 

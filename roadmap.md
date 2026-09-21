@@ -143,7 +143,7 @@ Implementation order:
 
 ### F-004: Safe Quarantine Workflow
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-20 (PR #6)
 - **Tier:** Tier 1, core product workflow
 - **Effort:** Large because moving files safely requires path validation, change detection, no-overwrite behavior, verified cross-filesystem copies, durable records, partial-failure handling, background work, and cross-platform tests
 - **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`
@@ -184,7 +184,7 @@ Implementation order:
 
 ### F-005: Candidate Thumbnails
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-20 (PR #6)
 - **Tier:** Tier 1, review usability
 - **Effort:** Medium because previews must be bounded, EXIF-corrected, generated off the GUI thread, kept in memory, and integrated without weakening scan or file safety
 - **Planning files:** `feature.md`, `project-brief.md`, `roadmap.md`, `README.md`
@@ -277,7 +277,7 @@ Success: The app identifies likely screenshots and memes, explains each result, 
 
 ## Milestone 4: Quarantine Workflow
 
-**Status:** in progress as F-004. F-005 supplies candidate previews and the source identity required for safe changed-file detection.
+**Status:** shipped 2026-09-20 as F-004 and F-005 (PR #6).
 
 - Let the user select a quarantine folder.
 - Detect unsafe choices, including overlap with source folders.
