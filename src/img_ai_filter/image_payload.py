@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import hashlib
 from io import BytesIO
 import os
 from pathlib import Path
@@ -18,6 +19,8 @@ MAX_INPUT_BYTES = 32 * 1024 * 1024
 MAX_ENCODED_PNG_BYTES = 8 * 1024 * 1024
 SAFE_MAX_PIXELS = 100_000_000
 MAX_DIMENSION = 1024
+THUMBNAIL_MAX_EDGE = 96
+MAX_THUMBNAIL_BYTES = 256 * 1024
 
 _FORMATS_BY_EXTENSION = {
     ".png": "PNG",
@@ -35,11 +38,21 @@ class ImagePayloadError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceIdentity:
+    byte_count: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedImage:
     data_url: str
     png_bytes: int
     width: int
     height: int
+    identity: SourceIdentity
+    thumbnail_png: bytes
+    thumbnail_width: int
+    thumbnail_height: int
 
 
 def _read_bounded(path: Path) -> bytes:
@@ -93,6 +106,7 @@ def prepare_image(path: str | os.PathLike[str]) -> PreparedImage:
         raise ImagePayloadError("The image extension is not supported")
 
     source_bytes = _read_bounded(source_path)
+    identity = SourceIdentity(len(source_bytes), hashlib.sha256(source_bytes).hexdigest())
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", Image.DecompressionBombWarning)
@@ -112,6 +126,25 @@ def prepare_image(path: str | os.PathLike[str]) -> PreparedImage:
         raise ImagePayloadError("The image dimensions are not supported") from None
     except (UnidentifiedImageError, OSError, ValueError):
         raise ImagePayloadError("The image could not be decoded") from None
+
+    thumb = normalized
+    tw, th = normalized.size
+    if max(tw, th) > THUMBNAIL_MAX_EDGE:
+        thumb_scale = THUMBNAIL_MAX_EDGE / max(tw, th)
+        thumb_size = (
+            max(1, round(tw * thumb_scale)),
+            max(1, round(th * thumb_scale)),
+        )
+        thumb = normalized.resize(thumb_size, Image.Resampling.LANCZOS)
+
+    thumb_output = BytesIO()
+    try:
+        thumb.save(thumb_output, format="PNG")
+    except (OSError, ValueError):
+        raise ImagePayloadError("The thumbnail could not be encoded") from None
+    thumbnail_png = thumb_output.getvalue()
+    if len(thumbnail_png) > MAX_THUMBNAIL_BYTES:
+        raise ImagePayloadError("The thumbnail is too large")
 
     width, height = normalized.size
     if max(width, height) > MAX_DIMENSION:
@@ -133,9 +166,14 @@ def prepare_image(path: str | os.PathLike[str]) -> PreparedImage:
 
     width, height = normalized.size
     encoded = base64.b64encode(png).decode("ascii")
+    thumb_width, thumb_height = thumb.size
     return PreparedImage(
         data_url="data:image/png;base64," + encoded,
         png_bytes=len(png),
         width=width,
         height=height,
+        identity=identity,
+        thumbnail_png=thumbnail_png,
+        thumbnail_width=thumb_width,
+        thumbnail_height=thumb_height,
     )

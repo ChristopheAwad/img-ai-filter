@@ -3,8 +3,9 @@
 Image Filter is a privacy-conscious desktop application for finding screenshots and memes in selected image folders. It does not change files during a scan.
 
 The current experimental MVP connects **Scan Folder** to a user-managed
-KoboldCpp vision server on loopback or the private local network. Quarantine and
-file-moving actions are not implemented.
+KoboldCpp vision server on loopback or the private local network. Every
+candidate shows a compact preview and review details, and the user can move
+exactly the checked candidates into a chosen quarantine folder.
 
 ## KoboldCpp detection
 
@@ -22,6 +23,25 @@ The app tests KoboldCpp capabilities and discovers the first loaded model before
 it enables scanning. The base URL and discovered model are normal app settings.
 Completed protected credential support remains dormant because this MVP accepts
 only an unprotected KoboldCpp server.
+
+## Quarantine
+
+Each candidate shows a compact preview (maximum 96 by 96 pixels) next to its
+path, category, reason, and confidence. Previews are generated in memory during
+the scan and are never written to disk.
+
+Select **Select Quarantine Folder** to choose where checked files move. The app
+remembers the folder between launches and rejects a folder that overlaps the
+source folder or is no longer available. Check the candidates you want to move,
+then choose **Move Checked to Quarantine**. The app lists every exact source and
+destination path and waits for confirmation before it starts.
+
+A move copies each verified file into the quarantine folder, keeping its
+source-relative subfolder. A source that changed after scanning, and a
+destination that already exists, are left untouched and reported. On a different
+filesystem the app verifies the complete copy before it removes the source.
+Every plan and outcome is recorded in `.img-ai-filter-moves.jsonl` inside the
+quarantine folder. Quarantine is a move to a user-selected folder, not a delete.
 
 ## Requirements
 
@@ -64,6 +84,9 @@ python -m img_ai_filter
 4. Select a test folder with **Select Folder**.
 5. Select **Scan Folder**, read the transfer warning, and consent only if the
    displayed destination is correct.
+6. Optionally select **Select Quarantine Folder**, review the previews, check
+   candidates, and choose **Move Checked to Quarantine** after reading the exact
+   confirmation details.
 
 Selecting a folder does not search it, load images, or contact the server.
 **Scan Folder** is enabled only after a folder is selected and the connection

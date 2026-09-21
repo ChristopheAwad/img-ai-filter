@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from threading import Event
 
@@ -10,13 +11,28 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 import img_ai_filter.window as window_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
+from img_ai_filter.image_payload import SourceIdentity
+from img_ai_filter.quarantine import (
+    MOVE_LOG_NAME,
+    MoveOutcome,
+    MoveStatus,
+    QuarantineState,
+    QuarantineSummary,
+)
 from img_ai_filter.scan_workflow import ScanCandidate, ScanState, ScanSummary
 from img_ai_filter.vision_connection import KoboldCppInfo, VisionConnectionError
 from img_ai_filter.window import DEFAULT_SERVER_URL, MainWindow
+from img_ai_filter.settings import QUARANTINE_FOLDER_KEY
 
 
 READY_CONFIG = build_vision_endpoint_config(
     "http://192.168.0.239:5001/v1/", model="vision-model"
+)
+
+ONE_PIXEL_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d494844520000000100000001"
+    "08060000001f15c4890000000d49444154789c6360606060"
+    "000000050001a5f645400000000049454e44ae426082"
 )
 
 
@@ -29,6 +45,35 @@ class MemoryStore:
 
     def write(self, key: str, value: str) -> None:
         self.values[key] = value
+
+    def delete(self, key: str) -> None:
+        self.values.pop(key, None)
+
+
+def _identity(data: bytes) -> SourceIdentity:
+    return SourceIdentity(len(data), hashlib.sha256(data).hexdigest())
+
+
+def _candidate(path: Path, category: str = "screenshot") -> ScanCandidate:
+    data = path.read_bytes() if path.is_file() else b""
+    return ScanCandidate(
+        path,
+        category,
+        f"Visual reason for {category}.",
+        0.9,
+        _identity(data),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+    )
+
+
+def _move_summary(
+    quarantine_root: Path,
+    outcomes: tuple[MoveOutcome, ...],
+    state: QuarantineState,
+) -> QuarantineSummary:
+    return QuarantineSummary("test-batch", quarantine_root, outcomes, state)
 
 
 class FakeTransport:
@@ -304,6 +349,10 @@ def test_candidate_rows_include_details_and_start_unchecked(
                 "captioned_meme",
                 "Large caption above a reaction image.",
                 0.87,
+                SourceIdentity(0, "a" * 64),
+                ONE_PIXEL_PNG,
+                1,
+                1,
             ),
         ),
         discovered=3,
@@ -338,7 +387,16 @@ def test_candidate_rows_include_details_and_start_unchecked(
 def test_retry_replaces_old_rows_and_requests_consent_again(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
-    candidate = ScanCandidate(tmp_path / "old.png", "screenshot", "Interface.", 0.9)
+    candidate = ScanCandidate(
+        tmp_path / "old.png",
+        "screenshot",
+        "Interface.",
+        0.9,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+    )
     outcomes = iter(
         [
             _summary(candidates=(candidate,), discovered=1, analyzed=1),
@@ -466,3 +524,518 @@ def test_close_during_scan_cancels_transport_and_stops_worker(
 
     assert transport.cancel_calls == 1
     assert window._thread is None or not window._thread.isRunning()
+
+
+# ---------------------------------------------------------------------------
+# Quarantine folder selection and move workflow
+# ---------------------------------------------------------------------------
+
+
+def _scanned_candidate_window(
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+    candidates: tuple[ScanCandidate, ...] = (),
+):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    for candidate in candidates:
+        candidate.path.write_bytes(b"scan bytes")
+    summary = _summary(
+        candidates=candidates,
+        discovered=len(candidates),
+        analyzed=len(candidates),
+    )
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: summary,
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, source_dir)
+    if candidates:
+        window.scan_button.click()
+        qtbot.waitUntil(lambda: window.results_list.count() == len(candidates))
+    return window, source_dir
+
+
+def _pick_quarantine(window: MainWindow, monkeypatch, folder: Path) -> None:
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args: str(folder)
+    )
+    window.select_quarantine_button.click()
+
+
+def test_quarantine_starts_without_folder_and_move_is_disabled(qtbot) -> None:
+    window = MainWindow(settings_store=MemoryStore(), initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    assert window.select_quarantine_button.text() == "Select Quarantine Folder"
+    assert window.forget_quarantine_button.text() == "Forget Quarantine Folder"
+    assert window.move_quarantine_button.text() == "Move Checked to Quarantine"
+    assert "No quarantine folder" in window.quarantine_label.text()
+    assert not window.move_quarantine_button.isEnabled()
+    assert not window.forget_quarantine_button.isEnabled()
+
+
+def test_stored_quarantine_folder_loads_at_startup(qtbot, tmp_path: Path) -> None:
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    store = MemoryStore()
+    store.write(QUARANTINE_FOLDER_KEY, str(quarantine))
+
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    assert window.quarantine_label.text() == str(quarantine)
+    assert window.forget_quarantine_button.isEnabled()
+
+
+def test_stored_quarantine_folder_that_disappeared_is_flagged(
+    qtbot, tmp_path: Path
+) -> None:
+    store = MemoryStore()
+    store.write(QUARANTINE_FOLDER_KEY, str(tmp_path / "gone"))
+
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    assert "not available" in window.quarantine_label.text()
+    assert not window.move_quarantine_button.isEnabled()
+
+
+def test_selecting_quarantine_folder_persists_and_enables_move(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+
+    assert not window.move_quarantine_button.isEnabled()
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    assert not window.move_quarantine_button.isEnabled()
+    _pick_quarantine(window, monkeypatch, quarantine)
+
+    assert window.move_quarantine_button.isEnabled()
+
+
+def test_select_quarantine_persists_uses_store(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    store = MemoryStore()
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    _pick_quarantine(window, monkeypatch, quarantine)
+
+    assert store.values[QUARANTINE_FOLDER_KEY] == str(quarantine)
+    assert str(quarantine) in window.quarantine_label.text()
+
+
+def test_cancelling_quarantine_picker_keeps_current_folder(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    store = MemoryStore()
+    store.write(QUARANTINE_FOLDER_KEY, str(quarantine))
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: "")
+    window.select_quarantine_button.click()
+
+    assert window.quarantine_label.text() == str(quarantine)
+    assert store.values[QUARANTINE_FOLDER_KEY] == str(quarantine)
+
+
+def test_quarantine_picker_rejects_a_file_folder(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    not_a_dir = tmp_path / "note.txt"
+    not_a_dir.write_text("not a folder")
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args: warnings.append(args) or QMessageBox.StandardButton.Ok,
+    )
+    store = MemoryStore()
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    _pick_quarantine(window, monkeypatch, not_a_dir)
+
+    assert len(warnings) == 1
+    assert QUARANTINE_FOLDER_KEY not in store.values
+    assert "No quarantine folder" in window.quarantine_label.text()
+
+
+def test_quarantine_cannot_be_placed_inside_source_folder(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    inside = source_dir / "quarantine"
+    inside.mkdir()
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args: warnings.append(args) or QMessageBox.StandardButton.Ok,
+    )
+    store = MemoryStore()
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args: str(source_dir)
+    )
+    window.select_button.click()
+    _pick_quarantine(window, monkeypatch, inside)
+
+    assert len(warnings) == 1
+    assert QUARANTINE_FOLDER_KEY not in store.values
+
+
+def test_quarantine_confirm_parts_mention_folder_and_every_path() -> None:
+    title, heading, detailed = window_module._quarantine_confirm_parts(
+        ("a.png", "b.png"), "/q"
+    )
+    assert title == "Move checked files to quarantine?"
+    assert "2" in heading
+    assert "/q" in heading
+    assert detailed == "a.png\nb.png"
+
+
+def test_declining_quarantine_confirm_changes_nothing(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    confirmations = []
+
+    def on_confirm(paths, folder):
+        confirmations.append((tuple(paths), folder))
+        return False
+
+    def on_move(*args, **kwargs):
+        raise AssertionError("run_quarantine must not run after decline")
+
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+
+    window._confirm_quarantine = on_confirm
+    window._run_quarantine = on_move
+    window.move_quarantine_button.click()
+
+    assert confirmations == [((str(source_file),), str(quarantine))]
+    assert not (quarantine / "shot.png").exists()
+
+
+def test_accepting_confirmation_runs_checked_move_and_reports_summary(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    runs = []
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        runs.append((list(candidates), source_root, quarantine_root))
+        progress(1, 1)
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(
+                    source_file,
+                    quarantine / "shot.png",
+                    MoveStatus.MOVED,
+                    "",
+                ),
+            ),
+            QuarantineState.COMPLETED,
+        )
+
+    window, source_dir = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(lambda: "Moved 1 of 1" in window.status_label.text())
+
+    assert runs[0][0] == [candidate]
+    assert runs[0][1] == source_dir.resolve()
+    assert runs[0][2] == quarantine
+    assert window.move_log_label.text() == str(quarantine / MOVE_LOG_NAME)
+    assert not window.cancel_button.isEnabled()
+
+
+def test_partial_failure_reports_moved_and_skipped_counts(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_a = tmp_path / "source" / "a.png"
+    source_b = tmp_path / "source" / "b.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate_a = _candidate(source_a)
+    candidate_b = _candidate(source_b, category="image_macro")
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(source_a, quarantine / "a.png", MoveStatus.MOVED, ""),
+                MoveOutcome(
+                    source_b,
+                    quarantine / "b.png",
+                    MoveStatus.FAILED,
+                    "The source file changed after it was scanned.",
+                ),
+            ),
+            QuarantineState.COMPLETED_WITH_FAILURES,
+        )
+
+    window, _ = _scanned_candidate_window(
+        qtbot,
+        monkeypatch,
+        tmp_path,
+        candidates=(candidate_a, candidate_b),
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window.results_list.item(1).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(lambda: "Quarantine finished with failures" in window.status_label.text())
+
+    assert "1 moved" in window.status_label.text()
+    assert "1 skipped" in window.status_label.text()
+
+
+def test_total_failure_reports_clean_message(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(
+                    source_file,
+                    quarantine / "shot.png",
+                    MoveStatus.FAILED,
+                    "The copy failed.",
+                ),
+            ),
+            QuarantineState.FAILED,
+        )
+
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(
+        lambda: "No checked files could be moved" in window.status_label.text()
+    )
+
+
+def test_move_worker_exception_is_safe_and_not_leaked(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    private = "private move body"
+
+    def on_move(*args, **kwargs):
+        raise RuntimeError(private)
+
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(
+        lambda: "could not be completed" in window.status_label.text()
+    )
+
+    assert private not in window.status_label.text()
+
+
+def test_forgetting_quarantine_folder_clears_it_and_disables_move(
+    qtbot, tmp_path: Path
+) -> None:
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    store = MemoryStore()
+    store.write(QUARANTINE_FOLDER_KEY, str(quarantine))
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    window.forget_quarantine_button.click()
+
+    assert QUARANTINE_FOLDER_KEY not in store.values
+    assert "No quarantine folder" in window.quarantine_label.text()
+    assert not window.forget_quarantine_button.isEnabled()
+    assert not window.move_quarantine_button.isEnabled()
+
+
+def test_move_button_is_disabled_while_scanning(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    entered = Event()
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+
+    def run_scan(*args, **kwargs):
+        entered.set()
+        kwargs["cancel_event"].wait(2)
+        return _summary()
+
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=run_scan,
+        confirm_transfer=lambda *_: True,
+        settings_store=MemoryStore(),
+    )
+    qtbot.addWidget(window)
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _select(window, monkeypatch, source_dir)
+    _pick_quarantine(window, monkeypatch, quarantine)
+
+    window.scan_button.click()
+    qtbot.waitUntil(entered.is_set)
+
+    assert not window.move_quarantine_button.isEnabled()
+    assert not window.select_quarantine_button.isEnabled()
+
+    window.cancel_button.click()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+
+
+def test_close_during_quarantine_waits_for_move_then_closes(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    candidate = _candidate(source_file)
+    entered = Event()
+    release = Event()
+    deleted = []
+    monkeypatch.setattr(
+        window_module.OperationThread,
+        "deleteLater",
+        lambda thread: deleted.append(thread),
+    )
+
+    def on_move(candidates, source_root, quarantine_root, *, progress=None):
+        entered.set()
+        release.wait(2)
+        return _move_summary(
+            quarantine,
+            (
+                MoveOutcome(
+                    source_file,
+                    quarantine / "shot.png",
+                    MoveStatus.MOVED,
+                    "",
+                ),
+            ),
+            QuarantineState.COMPLETED,
+        )
+
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+    _pick_quarantine(window, monkeypatch, quarantine)
+    window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
+    window._confirm_quarantine = lambda *_: True
+    window._run_quarantine = on_move
+
+    window.move_quarantine_button.click()
+    qtbot.waitUntil(entered.is_set)
+
+    window.close()
+    qtbot.waitUntil(lambda: not window.isVisible())
+    release.set()
+    qtbot.waitUntil(lambda: len(deleted) == 1)
+
+    assert window._thread is None
+    assert (quarantine / "shot.png").exists() is False
+
+
+def test_candidate_rows_store_candidate_and_thumbnail_icon(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = _candidate(source_file)
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+
+    item = window.results_list.item(0)
+
+    assert item.data(Qt.ItemDataRole.UserRole) is candidate
+    assert not item.icon().isNull()
+
+
+def test_invalid_thumbnail_bytes_do_not_break_rows(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = ScanCandidate(
+        source_file,
+        "screenshot",
+        "Visual reason for screenshot.",
+        0.9,
+        SourceIdentity(0, "a" * 64),
+        b"not a png",
+        1,
+        1,
+    )
+    window, _ = _scanned_candidate_window(
+        qtbot, monkeypatch, tmp_path, candidates=(candidate,)
+    )
+
+    item = window.results_list.item(0)
+
+    assert item.icon().isNull()
+    assert str(source_file) in item.text()

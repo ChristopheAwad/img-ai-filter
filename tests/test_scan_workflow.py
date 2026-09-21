@@ -9,9 +9,13 @@ from threading import Event
 import pytest
 
 from img_ai_filter.endpoint import build_vision_endpoint_config
-from img_ai_filter.image_payload import ImagePayloadError
+from img_ai_filter.image_payload import ImagePayloadError, SourceIdentity
 from img_ai_filter.scanner import ScanError, ScanResult
-from img_ai_filter.scan_workflow import ScanState, run_server_scan
+from img_ai_filter.scan_workflow import (
+    ScanCandidate,
+    ScanState,
+    run_server_scan,
+)
 from img_ai_filter.vision_client import VisionCancelled, VisionClientError
 from img_ai_filter.vision_response import VisionDecision
 
@@ -24,6 +28,23 @@ CONFIG = build_vision_endpoint_config(
 @dataclass(frozen=True)
 class Prepared:
     data_url: str
+    identity: SourceIdentity = SourceIdentity(0, "a" * 64)
+    thumbnail_png: bytes = b"preview-png"
+    thumbnail_width: int = 8
+    thumbnail_height: int = 8
+
+
+def _candidate(path: Path, category: str, confidence: float = 0.8) -> ScanCandidate:
+    return ScanCandidate(
+        path,
+        category,
+        f"Visual reason for {category}.",
+        confidence,
+        SourceIdentity(9, "b" * 64),
+        b"candidate-preview",
+        8,
+        8,
+    )
 
 
 def _decision(category: str, confidence: float = 0.8) -> VisionDecision:
@@ -319,3 +340,111 @@ def test_source_file_is_unchanged_across_mixed_scan(tmp_path: Path) -> None:
 
     after = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (first, second)}
     assert after == before
+
+
+# ---------------------------------------------------------------------------
+# Source identity and thumbnail contract
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_carries_exact_identity_and_thumbnail_from_preparation() -> None:
+    path = Path("one.png")
+    identity = SourceIdentity(7, "c" * 64)
+    prepared = Prepared(
+        "data:image/png;base64,candidate",
+        identity=identity,
+        thumbnail_png=b"preview-bytes",
+        thumbnail_width=10,
+        thumbnail_height=7,
+    )
+
+    def classify(_config, data_url, _transport, *, cancel_event=None):
+        return _decision("screenshot")
+
+    summary = run_server_scan(
+        Path("/selected"),
+        CONFIG,
+        object(),
+        scan=lambda _: ScanResult((path,), ()),
+        prepare=lambda _: prepared,
+        classify=classify,
+    )
+
+    candidate = summary.candidates[0]
+    assert candidate.identity == identity
+    assert candidate.thumbnail_png == b"preview-bytes"
+    assert (candidate.thumbnail_width, candidate.thumbnail_height) == (10, 7)
+    assert candidate.path == path
+    assert candidate.category == "screenshot"
+    assert candidate.checked is False
+
+
+def test_thumbnail_and_identity_flow_only_to_candidate_decisions() -> None:
+    paths = (Path("a.png"), Path("b.png"))
+    prepared = Prepared("data:image/png;base64,one", thumbnail_png=b"zip")
+
+    summary, _, _ = _run(
+        paths,
+        {"a.png": _decision("ordinary"), "b.png": _decision("uncertain")},
+    )
+
+    assert summary.candidates == ()
+    assert summary.ordinary == 1
+    assert summary.uncertain == 1
+    assert summary.analyzed == 2
+
+
+def test_thumbnail_preparation_failure_counts_as_failed_and_continues() -> None:
+    paths = (Path("bad.png"), Path("good.png"))
+
+    def prepare(path: Path):
+        if path.name == "bad.png":
+            raise ImagePayloadError("The thumbnail could not be encoded")
+        return Prepared("data:image/png;base64,good")
+
+    summary = run_server_scan(
+        Path("/selected"),
+        CONFIG,
+        object(),
+        scan=lambda _: ScanResult(paths, ()),
+        prepare=prepare,
+        classify=lambda *args, **kwargs: _decision("screenshot"),
+    )
+
+    assert summary.failed == 1
+    assert summary.analyzed == 1
+    assert summary.candidate_count == 1
+
+
+def test_every_candidate_is_unchecked_by_contract() -> None:
+    paths = tuple(Path(f"{n}.png") for n in range(3))
+    outcomes = {path.name: _decision("screenshot") for path in paths}
+
+    summary, _, _ = _run(paths, outcomes)
+
+    assert len(summary.candidates) == 3
+    assert all(candidate.checked is False for candidate in summary.candidates)
+    assert [candidate.path for candidate in summary.candidates] == list(paths)
+
+
+def test_candidate_order_matches_scanner_order() -> None:
+    paths = tuple(Path(f"{n}.png") for n in ("a", "b", "c", "d"))
+    outcomes = {path.name: _decision("comic") for path in paths}
+
+    summary, _, _ = _run(paths, outcomes)
+
+    assert [candidate.path for candidate in summary.candidates] == list(paths)
+
+
+def test_thumbnail_bytes_and_identity_never_enter_exceptions() -> None:
+    with pytest.raises(TypeError, match="preparation defect"):
+        run_server_scan(
+            Path("/selected"),
+            CONFIG,
+            object(),
+            scan=lambda _: ScanResult((Path("a.png"),), ()),
+            prepare=lambda _: (_ for _ in ()).throw(
+                TypeError("preparation defect")
+            ),
+            classify=lambda *args, **kwargs: pytest.fail("must not classify"),
+        )

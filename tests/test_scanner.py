@@ -123,7 +123,7 @@ def test_windows_reparse_attribute_is_detected(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(scanner.os, "name", "nt")
     monkeypatch.setattr(scanner.os, "lstat", lambda path: reparse_stat)
 
-    assert scanner._is_windows_reparse_point(tmp_path)
+    assert scanner.is_windows_reparse_point(tmp_path)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows junctions are only available on Windows")
