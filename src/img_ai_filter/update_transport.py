@@ -214,11 +214,13 @@ def download_appimage(
             progress(0, asset.size)
         descriptor, name = tempfile.mkstemp(prefix=".ImageFilter-update-", dir=directory)
         temporary_path = Path(name)
-        try:
-            os.fchmod(descriptor, 0o600)
-        except Exception:
-            os.close(descriptor)
-            raise
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            try:
+                fchmod(descriptor, 0o600)
+            except Exception:
+                os.close(descriptor)
+                raise
         digest = hashlib.sha256()
         downloaded = 0
         with os.fdopen(descriptor, "wb") as output:

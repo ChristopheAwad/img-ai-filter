@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 from typing import Callable, Mapping
 
 from .update_transport import VerifiedDownload
@@ -54,6 +55,8 @@ def detect_appimage_installation(
     environment: Mapping[str, str] = os.environ,
 ) -> AppImageInstallation | None:
     """Return a validated self-install target, without modifying the filesystem."""
+    if sys.platform != "linux":
+        return None
     value = environment.get("APPIMAGE")
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         return None
@@ -113,6 +116,8 @@ def install_appimage(
     replace: Callable[[os.PathLike[str] | str, os.PathLike[str] | str], None] = os.replace,
 ) -> InstallResult:
     """Install a verified sibling AppImage while retaining one recovery backup."""
+    if sys.platform != "linux":
+        raise InstallError("AppImage installation is only supported on Linux")
     if not isinstance(installation, AppImageInstallation) or not isinstance(
         download, VerifiedDownload
     ):

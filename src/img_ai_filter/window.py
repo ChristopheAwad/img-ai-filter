@@ -561,13 +561,13 @@ class MainWindow(QMainWindow):
         self.check_updates_button.clicked.connect(self._request_update_check)
 
         folder_buttons = QGridLayout()
-        folder_buttons.setSpacing(16)
+        folder_buttons.setSpacing(8)
         folder_buttons.addWidget(self.select_button, 0, 0)
         folder_buttons.addWidget(self.scan_button, 0, 1)
         folder_buttons.addWidget(self.cancel_button, 1, 0)
         folder_buttons.addWidget(self.activity_history_button, 1, 1)
-        folder_buttons.addWidget(self.settings_button, 2, 0)
-        folder_buttons.addWidget(self.check_updates_button, 2, 1)
+        folder_buttons.addWidget(self.settings_button, 2, 0, 1, 2)
+        folder_buttons.addWidget(self.check_updates_button, 3, 0, 1, 2)
         for column in range(2):
             folder_buttons.setColumnStretch(column, 1)
 
@@ -641,7 +641,7 @@ class MainWindow(QMainWindow):
         content = QVBoxLayout(content_widget)
         content.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         content.setContentsMargins(20, 24, 20, 28)
-        content.setSpacing(12)
+        content.setSpacing(10)
         content.addWidget(server_heading)
         content.addLayout(server_row)
         content.addWidget(self.connection_label)

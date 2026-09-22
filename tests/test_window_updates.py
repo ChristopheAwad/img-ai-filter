@@ -11,11 +11,28 @@ from PySide6.QtWidgets import QMessageBox
 
 import img_ai_filter.window as window_module
 from img_ai_filter.settings import INCLUDE_TEST_RELEASES_KEY
-from img_ai_filter.update_install import InstallResult
+from img_ai_filter.update_install import (
+    AppImageInstallation,
+    FileIdentity,
+    InstallResult,
+)
 from img_ai_filter.update_release import UpdateAsset, UpdateRelease
 from img_ai_filter.update_transport import VerifiedDownload
 from img_ai_filter.update_transport import UpdateCancelled
 from img_ai_filter.window import CandidateSelectionSettingsDialog, MainWindow
+
+
+def _installation(path: Path) -> AppImageInstallation:
+    file_stat = path.stat()
+    return AppImageInstallation(
+        path=path,
+        identity=FileIdentity(
+            device=file_stat.st_dev,
+            inode=file_stat.st_ino,
+            size=file_stat.st_size,
+            mtime_ns=file_stat.st_mtime_ns,
+        ),
+    )
 
 
 class MemoryStore:
@@ -186,6 +203,11 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
 
     monkeypatch.setattr(QMessageBox, "question", question)
     monkeypatch.setattr(QMessageBox, "exec", exec_dialog)
+    monkeypatch.setattr(
+        window_module,
+        "detect_appimage_installation",
+        lambda environment: _installation(current),
+    )
     window = MainWindow(
         settings_store=MemoryStore(),
         application_version="0.1.0",
@@ -224,6 +246,11 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
         QMessageBox,
         "question",
         lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(
+        window_module,
+        "detect_appimage_installation",
+        lambda environment: _installation(current),
     )
     window = MainWindow(
         settings_store=MemoryStore(),

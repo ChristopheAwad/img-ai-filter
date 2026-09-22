@@ -4,17 +4,25 @@ import hashlib
 import os
 from pathlib import Path
 import stat
+import sys
 
 import pytest
 
+import img_ai_filter.update_install as update_install_module
 from img_ai_filter.update_install import (
     AppImageInstallation,
+    FileIdentity,
     InstallError,
     detect_appimage_installation,
     install_appimage,
     restart_appimage,
 )
 from img_ai_filter.update_transport import VerifiedDownload
+
+LINUX_ONLY = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="AppImage installation is supported only on Linux",
+)
 
 
 def _make_appimage(path: Path, data: bytes = b"old appimage") -> Path:
@@ -43,6 +51,7 @@ def test_nonexistent_directory_and_nonregular_paths_are_not_installable(tmp_path
     assert detect_appimage_installation({"APPIMAGE": str(tmp_path)}) is None
 
 
+@LINUX_ONLY
 def test_symlinked_appimage_is_not_installable(tmp_path: Path) -> None:
     target = _make_appimage(tmp_path / "real.AppImage")
     link = tmp_path / "link.AppImage"
@@ -60,6 +69,44 @@ def test_extraction_mode_is_not_installable(tmp_path: Path) -> None:
     )
 
 
+def test_non_linux_platform_skips_filesystem_probing(tmp_path: Path, monkeypatch) -> None:
+    appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
+    monkeypatch.setattr(update_install_module.sys, "platform", "win32")
+
+    def forbidden_statvfs(*args, **kwargs):
+        raise AssertionError("non-Linux detection must not probe the filesystem")
+
+    monkeypatch.setattr(
+        update_install_module.os, "statvfs", forbidden_statvfs, raising=False
+    )
+    assert detect_appimage_installation({"APPIMAGE": str(appimage)}) is None
+
+
+def test_non_linux_platform_rejects_direct_installation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
+    download = _verified(tmp_path / "new.download")
+    file_stat = appimage.stat()
+    installation = AppImageInstallation(
+        path=appimage,
+        identity=FileIdentity(
+            device=file_stat.st_dev,
+            inode=file_stat.st_ino,
+            size=file_stat.st_size,
+            mtime_ns=file_stat.st_mtime_ns,
+        ),
+    )
+    monkeypatch.setattr(update_install_module.sys, "platform", "win32")
+
+    with pytest.raises(InstallError, match="Linux"):
+        install_appimage(installation, download)
+    assert appimage.read_bytes() == b"old appimage"
+    assert download.path.read_bytes() == b"new appimage"
+    assert not (tmp_path / "ImageFilter.AppImage.backup").exists()
+
+
+@LINUX_ONLY
 def test_valid_appimage_captures_exact_path_and_identity(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     detected = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -70,6 +117,7 @@ def test_valid_appimage_captures_exact_path_and_identity(tmp_path: Path) -> None
     assert detected.identity.inode == appimage.stat().st_ino
 
 
+@LINUX_ONLY
 def test_detection_does_not_modify_appimage(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     before = appimage.stat()
@@ -82,6 +130,7 @@ def test_detection_does_not_modify_appimage(tmp_path: Path) -> None:
     )
 
 
+@LINUX_ONLY
 def test_install_rejects_download_outside_appimage_directory(tmp_path: Path) -> None:
     app_dir = tmp_path / "app"
     download_dir = tmp_path / "downloads"
@@ -97,6 +146,7 @@ def test_install_rejects_download_outside_appimage_directory(tmp_path: Path) -> 
     assert appimage.read_bytes() == b"old appimage"
 
 
+@LINUX_ONLY
 def test_install_rechecks_download_size_and_digest(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     installation = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -110,6 +160,7 @@ def test_install_rechecks_download_size_and_digest(tmp_path: Path) -> None:
     assert not (tmp_path / "ImageFilter.AppImage.backup").exists()
 
 
+@LINUX_ONLY
 def test_install_rejects_changed_current_appimage(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     installation = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -122,6 +173,7 @@ def test_install_rejects_changed_current_appimage(tmp_path: Path) -> None:
     assert appimage.read_bytes() == b"changed old appimage"
 
 
+@LINUX_ONLY
 def test_successful_install_replaces_original_and_retains_one_backup(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     installation = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -139,6 +191,7 @@ def test_successful_install_replaces_original_and_retains_one_backup(tmp_path: P
     assert stat.S_IMODE(appimage.stat().st_mode) == 0o755
 
 
+@LINUX_ONLY
 def test_second_install_replaces_only_known_regular_backup(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     first = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -153,6 +206,7 @@ def test_second_install_replaces_only_known_regular_backup(tmp_path: Path) -> No
     assert (tmp_path / "ImageFilter.AppImage.backup").read_bytes() == b"version two"
 
 
+@LINUX_ONLY
 def test_install_refuses_symlink_at_backup_path(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     installation = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -166,6 +220,7 @@ def test_install_refuses_symlink_at_backup_path(tmp_path: Path) -> None:
     assert unrelated.read_bytes() == b"old appimage"
 
 
+@LINUX_ONLY
 def test_final_replace_failure_restores_original(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     installation = detect_appimage_installation({"APPIMAGE": str(appimage)})
@@ -187,6 +242,7 @@ def test_final_replace_failure_restores_original(tmp_path: Path) -> None:
     assert download.path.read_bytes() == b"new appimage"
 
 
+@LINUX_ONLY
 def test_recovery_failure_reports_surviving_paths(tmp_path: Path) -> None:
     appimage = _make_appimage(tmp_path / "ImageFilter.AppImage")
     installation = detect_appimage_installation({"APPIMAGE": str(appimage)})
