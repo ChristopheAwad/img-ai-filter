@@ -747,23 +747,19 @@ class MainWindow(QMainWindow):
             self._quarantine_folder is not None and not self._quarantine_missing
         )
         move_roots_ready = False
-        quarantine_validation_error = False
+        quarantine_validation_message = ""
         if quarantine_ready and self._selected_folder is not None:
             try:
                 validate_quarantine_roots(
                     self._selected_folder,
                     self._quarantine_folder,
                 )
-            except QuarantineError:
-                quarantine_validation_error = True
+            except QuarantineError as error:
+                quarantine_validation_message = str(error)
             else:
                 move_roots_ready = True
-        self.quarantine_validation_label.setText(
-            "The source and quarantine folders overlap. Select a different quarantine folder."
-            if quarantine_validation_error
-            else ""
-        )
-        self.quarantine_validation_label.setVisible(quarantine_validation_error)
+        self.quarantine_validation_label.setText(quarantine_validation_message)
+        self.quarantine_validation_label.setVisible(bool(quarantine_validation_message))
         self.select_button.setEnabled(not busy)
         self.server_url_input.setEnabled(not busy)
         self.test_connection_button.setEnabled(not busy)
@@ -844,7 +840,6 @@ class MainWindow(QMainWindow):
         self._config = None
         self.connection_label.setText("Connecting to KoboldCpp...")
         self.model_label.setText("Model: not discovered")
-        self._cancel_event = Event()
 
         def operation(progress: Callable[[int, int], None]) -> Any:
             transport = self._transport_factory()
@@ -1917,7 +1912,7 @@ class MainWindow(QMainWindow):
                 padding: 4px;
             }
             QListWidget#results:focus {
-                border: 2px solid #136f8a;
+                border-color: #136f8a;
             }
             QListWidget#results::indicator {
                 width: 0;

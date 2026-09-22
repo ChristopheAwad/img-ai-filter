@@ -322,6 +322,30 @@ def test_declining_install_sets_terminal_status(qtbot, monkeypatch, tmp_path) ->
     assert window.status_label.text() == "The update was downloaded but not installed."
 
 
+def test_invalid_update_results_set_terminal_statuses(qtbot, monkeypatch) -> None:
+    boxes: list[QMessageBox] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "exec",
+        lambda box: boxes.append(box) or QMessageBox.StandardButton.Ok,
+    )
+    window = MainWindow(settings_store=MemoryStore(), application_version="0.1.0")
+    qtbot.addWidget(window)
+
+    window.status_label.setText("Checking for updates...")
+    window._finish_update_check(object())
+    assert window.status_label.text() == "The update information could not be used."
+
+    window.status_label.setText("Downloading update...")
+    window._finish_update_download(object())
+    assert window.status_label.text() == "The downloaded update could not be used."
+
+    window.status_label.setText("Installing update...")
+    window._finish_update_install(object())
+    assert window.status_label.text() == "The installed update could not be verified."
+    assert len(boxes) == 3
+
+
 def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
     boxes: list[QMessageBox] = []
 

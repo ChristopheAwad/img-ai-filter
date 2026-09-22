@@ -848,8 +848,9 @@ def test_overlapping_saved_quarantine_explains_why_move_is_disabled(
 
     assert not window.move_quarantine_button.isEnabled()
     assert window.quarantine_validation_label.isVisibleTo(window)
-    assert "overlap" in window.quarantine_validation_label.text().lower()
-    assert "different quarantine folder" in window.quarantine_validation_label.text().lower()
+    assert window.quarantine_validation_label.text() == (
+        "The source and quarantine folders must be separate."
+    )
 
 
 def test_default_confirm_uses_source_and_destination_pairs(
@@ -2122,6 +2123,9 @@ def test_select_all_checks_every_row_and_switches_to_clear_all(
 
     assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
     assert window.results_list.item(1).checkState() == Qt.CheckState.Checked
+    for index in range(2):
+        row = window.results_list.itemWidget(window.results_list.item(index))
+        assert row.findChild(QCheckBox, "candidateCheckBox").isChecked()
     assert window.selection_button.text() == "Clear All"
 
 
@@ -2143,6 +2147,9 @@ def test_clear_all_unchecks_every_row_and_switches_to_select_all(
 
     assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
     assert window.results_list.item(1).checkState() == Qt.CheckState.Unchecked
+    for index in range(2):
+        row = window.results_list.itemWidget(window.results_list.item(index))
+        assert not row.findChild(QCheckBox, "candidateCheckBox").isChecked()
     assert window.selection_button.text() == "Select All"
 
 
