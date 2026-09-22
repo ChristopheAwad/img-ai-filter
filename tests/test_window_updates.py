@@ -174,6 +174,7 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
     release = _release()
     stages: list[str] = []
     questions: list[str] = []
+    detected_environments: list[dict[str, str]] = []
 
     def question(parent, title, text, *args):
         questions.append(title)
@@ -201,13 +202,13 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
         stages.append(f"restart:{path}")
         return True
 
+    def detect(environment):
+        detected_environments.append(environment)
+        return _installation(current)
+
     monkeypatch.setattr(QMessageBox, "question", question)
     monkeypatch.setattr(QMessageBox, "exec", exec_dialog)
-    monkeypatch.setattr(
-        window_module,
-        "detect_appimage_installation",
-        lambda environment: _installation(current),
-    )
+    monkeypatch.setattr(window_module, "detect_appimage_installation", detect)
     window = MainWindow(
         settings_store=MemoryStore(),
         application_version="0.1.0",
@@ -225,6 +226,7 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
 
     assert stages == ["download", "install", f"restart:{current}", "close"]
     assert questions == ["Update available", "Install update?", "Restart Image Filter?"]
+    assert detected_environments == [{"APPIMAGE": str(current)}]
 
 
 def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -> None:
@@ -236,10 +238,15 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
         notes="<b>bold</b><a href='https://invalid.example/'>link</a>",
     )
     boxes: list[QMessageBox] = []
+    detected_environments: list[dict[str, str]] = []
 
     def exec_dialog(box):
         boxes.append(box)
         return QMessageBox.StandardButton.No
+
+    def detect(environment):
+        detected_environments.append(environment)
+        return _installation(current)
 
     monkeypatch.setattr(QMessageBox, "exec", exec_dialog)
     monkeypatch.setattr(
@@ -247,11 +254,7 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
         "question",
         lambda *args, **kwargs: QMessageBox.StandardButton.No,
     )
-    monkeypatch.setattr(
-        window_module,
-        "detect_appimage_installation",
-        lambda environment: _installation(current),
-    )
+    monkeypatch.setattr(window_module, "detect_appimage_installation", detect)
     window = MainWindow(
         settings_store=MemoryStore(),
         application_version="0.1.0",
@@ -267,6 +270,7 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
     assert boxes[0].defaultButton() == boxes[0].button(QMessageBox.StandardButton.No)
     assert "<b>bold</b>" in boxes[0].text()
+    assert detected_environments == [{"APPIMAGE": str(current)}]
 
 
 def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
