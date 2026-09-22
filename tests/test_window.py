@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from PySide6.QtCore import QPoint, QRect
 from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame
 
 from img_ai_filter import scanner as scanner_module
@@ -56,6 +57,12 @@ def assert_buttons_are_not_compressed(window: MainWindow) -> None:
         minimum = button.minimumSizeHint()
         assert button.width() >= minimum.width(), button.text()
         assert button.height() >= minimum.height(), button.text()
+
+
+def assert_widget_is_in_scroll_view(window: MainWindow, widget) -> None:
+    viewport = window.content_scroll.viewport()
+    widget_rect = QRect(widget.mapTo(viewport, QPoint(0, 0)), widget.size())
+    assert viewport.rect().contains(widget_rect)
 
 
 def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
@@ -133,10 +140,10 @@ def test_default_window_size_does_not_compress_action_buttons(qtbot) -> None:
 
     qtbot.waitUntil(window.isVisible)
 
-    assert window.size().width() == 820
-    assert window.size().height() == 560
     assert_buttons_are_not_compressed(window)
     assert window.content_scroll.horizontalScrollBar().maximum() == 0
+    assert window.content_scroll.verticalScrollBar().maximum() == 0
+    assert_widget_is_in_scroll_view(window, window.results_list)
 
 
 def test_long_main_window_text_wraps_without_horizontal_overflow(qtbot) -> None:
@@ -362,8 +369,8 @@ def test_quarantine_controls_are_in_the_visible_window(qtbot) -> None:
 
     qtbot.waitUntil(window.isVisible)
 
-    assert window.quarantine_label.isVisible()
-    assert window.select_quarantine_button.isVisible()
-    assert window.forget_quarantine_button.isVisible()
-    assert window.move_quarantine_button.isVisible()
-    assert window.move_log_label.isVisible()
+    assert_widget_is_in_scroll_view(window, window.quarantine_label)
+    assert_widget_is_in_scroll_view(window, window.select_quarantine_button)
+    assert_widget_is_in_scroll_view(window, window.forget_quarantine_button)
+    assert_widget_is_in_scroll_view(window, window.move_quarantine_button)
+    assert_widget_is_in_scroll_view(window, window.move_log_label)

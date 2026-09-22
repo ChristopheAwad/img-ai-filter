@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
@@ -386,7 +388,7 @@ class MainWindow(QMainWindow):
             self._quarantine_folder = None
 
         self.setWindowTitle("Image Filter")
-        self.resize(820, 560)
+        self.resize(820, 900)
         self.setMinimumSize(560, 400)
 
         title = QLabel("Review images, locally")
@@ -534,12 +536,13 @@ class MainWindow(QMainWindow):
         self.results_list.setObjectName("results")
         self.results_list.setAlternatingRowColors(True)
         self.results_list.setIconSize(QSize(96, 96))
-        self.results_list.setMinimumHeight(
-            self.results_list.minimumSizeHint().height()
-        )
+        results_policy = self.results_list.sizePolicy()
+        results_policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+        self.results_list.setSizePolicy(results_policy)
 
         content_widget = QWidget()
         content = QVBoxLayout(content_widget)
+        content.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         content.setContentsMargins(28, 24, 28, 28)
         content.setSpacing(12)
         content.addWidget(server_heading)
@@ -577,6 +580,9 @@ class MainWindow(QMainWindow):
         root.setLayout(root_layout)
         self.setCentralWidget(root)
         self._apply_style()
+        self.results_list.setMinimumHeight(
+            self.results_list.minimumSizeHint().height()
+        )
         self.server_url_input.textChanged.connect(self._server_url_edited)
         self.test_connection_button.clicked.connect(self._test_connection)
         self.scan_button.clicked.connect(self._request_scan)
