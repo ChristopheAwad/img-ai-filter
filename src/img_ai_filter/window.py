@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFrame,
+    QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
@@ -459,14 +461,15 @@ class MainWindow(QMainWindow):
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.clicked.connect(self._show_settings)
 
-        folder_row = QHBoxLayout()
-        folder_row.setSpacing(16)
-        folder_row.addWidget(self.folder_label, 1)
-        folder_row.addWidget(self.select_button)
-        folder_row.addWidget(self.scan_button)
-        folder_row.addWidget(self.cancel_button)
-        folder_row.addWidget(self.activity_history_button)
-        folder_row.addWidget(self.settings_button)
+        folder_buttons = QGridLayout()
+        folder_buttons.setSpacing(16)
+        folder_buttons.addWidget(self.select_button, 0, 0)
+        folder_buttons.addWidget(self.scan_button, 0, 1)
+        folder_buttons.addWidget(self.cancel_button, 0, 2)
+        folder_buttons.addWidget(self.activity_history_button, 1, 0)
+        folder_buttons.addWidget(self.settings_button, 1, 1)
+        for column in range(3):
+            folder_buttons.setColumnStretch(column, 1)
 
         quarantine_heading = QLabel("Quarantine folder")
         quarantine_heading.setObjectName("sectionHeading")
@@ -499,12 +502,13 @@ class MainWindow(QMainWindow):
         self.move_quarantine_button.setEnabled(False)
         self.move_quarantine_button.clicked.connect(self._request_quarantine_move)
 
-        quarantine_row = QHBoxLayout()
-        quarantine_row.setSpacing(12)
-        quarantine_row.addWidget(self.quarantine_label, 1)
-        quarantine_row.addWidget(self.select_quarantine_button)
-        quarantine_row.addWidget(self.forget_quarantine_button)
-        quarantine_row.addWidget(self.move_quarantine_button)
+        quarantine_buttons = QGridLayout()
+        quarantine_buttons.setSpacing(12)
+        quarantine_buttons.addWidget(self.select_quarantine_button, 0, 0)
+        quarantine_buttons.addWidget(self.forget_quarantine_button, 0, 1)
+        quarantine_buttons.addWidget(self.move_quarantine_button, 1, 0, 1, 2)
+        quarantine_buttons.setColumnStretch(0, 1)
+        quarantine_buttons.setColumnStretch(1, 1)
 
         self.move_log_label = QLabel("Move log: not written yet.")
         self.move_log_label.setObjectName("model")
@@ -513,6 +517,7 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("Select a folder to begin.")
         self.status_label.setObjectName("status")
+        self.status_label.setWordWrap(True)
 
         self.selection_button = QPushButton("Select All")
         self.selection_button.setObjectName("secondaryButton")
@@ -529,8 +534,12 @@ class MainWindow(QMainWindow):
         self.results_list.setObjectName("results")
         self.results_list.setAlternatingRowColors(True)
         self.results_list.setIconSize(QSize(96, 96))
+        self.results_list.setMinimumHeight(
+            self.results_list.minimumSizeHint().height()
+        )
 
-        content = QVBoxLayout()
+        content_widget = QWidget()
+        content = QVBoxLayout(content_widget)
         content.setContentsMargins(28, 24, 28, 28)
         content.setSpacing(12)
         content.addWidget(server_heading)
@@ -539,20 +548,30 @@ class MainWindow(QMainWindow):
         content.addWidget(self.model_label)
         content.addSpacing(8)
         content.addWidget(folder_heading)
-        content.addLayout(folder_row)
+        content.addWidget(self.folder_label)
+        content.addLayout(folder_buttons)
         content.addSpacing(8)
         content.addWidget(quarantine_heading)
-        content.addLayout(quarantine_row)
+        content.addWidget(self.quarantine_label)
+        content.addLayout(quarantine_buttons)
         content.addWidget(self.move_log_label)
         content.addSpacing(6)
         content.addLayout(results_status_row)
         content.addWidget(self.results_list, 1)
 
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setWidget(content_widget)
+
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         root_layout.addWidget(header)
-        root_layout.addLayout(content, 1)
+        root_layout.addWidget(self.content_scroll, 1)
 
         root = QWidget()
         root.setLayout(root_layout)

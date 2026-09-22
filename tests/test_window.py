@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtWidgets import QAbstractButton, QFileDialog
+from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame
 
 from img_ai_filter import scanner as scanner_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
@@ -36,6 +36,28 @@ def selection_window() -> MainWindow:
     )
 
 
+def main_action_buttons(window: MainWindow) -> tuple[QAbstractButton, ...]:
+    return (
+        window.test_connection_button,
+        window.select_button,
+        window.scan_button,
+        window.cancel_button,
+        window.activity_history_button,
+        window.settings_button,
+        window.select_quarantine_button,
+        window.forget_quarantine_button,
+        window.move_quarantine_button,
+        window.selection_button,
+    )
+
+
+def assert_buttons_are_not_compressed(window: MainWindow) -> None:
+    for button in main_action_buttons(window):
+        minimum = button.minimumSizeHint()
+        assert button.width() >= minimum.width(), button.text()
+        assert button.height() >= minimum.height(), button.text()
+
+
 def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
     window = selection_window()
     qtbot.addWidget(window)
@@ -43,9 +65,103 @@ def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
     assert window.select_button.text() == "Select Folder"
     assert window.scan_button.text() == "Scan Folder"
     assert not window.scan_button.isEnabled()
+    assert not window.cancel_button.isEnabled()
     assert window.folder_label.text() == "No folder selected"
+    assert window.quarantine_label.text() == "No quarantine folder selected."
+    assert not window.move_quarantine_button.isEnabled()
+    assert not window.selection_button.isEnabled()
     assert window.status_label.text() == "Select a folder to begin."
     assert window.results_list.count() == 0
+
+
+def test_minimum_window_size_does_not_compress_action_buttons(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+
+    assert_buttons_are_not_compressed(window)
+
+
+def test_minimum_window_uses_vertical_not_horizontal_body_scrolling(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+
+    assert window.content_scroll.horizontalScrollBar().maximum() == 0
+    assert (
+        window.content_scroll.widget().width()
+        <= window.content_scroll.viewport().width()
+    )
+    assert window.content_scroll.verticalScrollBar().maximum() > 0
+    assert window.folder_label.width() > 0
+    assert window.quarantine_label.width() > 0
+
+
+def test_short_window_keeps_header_visible_when_body_scrolls(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+    header = window.findChild(QFrame, "header")
+    assert header is not None
+    header_position = header.pos()
+
+    window.content_scroll.ensureWidgetVisible(window.results_list)
+    qtbot.wait(1)
+
+    assert window.content_scroll.verticalScrollBar().value() > 0
+    assert header.isVisible()
+    assert header.pos() == header_position
+    assert (
+        window.results_list.height()
+        >= window.results_list.minimumSizeHint().height()
+    )
+
+
+def test_default_window_size_does_not_compress_action_buttons(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+
+    assert window.size().width() == 820
+    assert window.size().height() == 560
+    assert_buttons_are_not_compressed(window)
+    assert window.content_scroll.horizontalScrollBar().maximum() == 0
+
+
+def test_long_main_window_text_wraps_without_horizontal_overflow(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    repeated = "very long folder name " * 20
+    window.folder_label.setText(repeated)
+    window.quarantine_label.setText(repeated)
+    window.status_label.setText(repeated)
+    window.move_log_label.setText(repeated)
+    window.resize(560, 400)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+
+    assert window.folder_label.wordWrap()
+    assert window.quarantine_label.wordWrap()
+    assert window.status_label.wordWrap()
+    assert window.move_log_label.wordWrap()
+    assert window.content_scroll.horizontalScrollBar().maximum() == 0
+    assert window.folder_label.width() > 0
+    assert window.folder_label.height() > 0
+    assert window.quarantine_label.width() > 0
+    assert window.quarantine_label.height() > 0
+    assert_buttons_are_not_compressed(window)
 
 
 def test_selecting_folder_only_prepares_it_for_scanning(
