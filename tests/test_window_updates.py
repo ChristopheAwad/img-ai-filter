@@ -66,28 +66,31 @@ def test_launch_does_not_check_for_updates(qtbot) -> None:
 
 def test_manual_check_reports_up_to_date_in_background(qtbot, monkeypatch) -> None:
     calls: list[tuple[str, bool]] = []
-    messages: list[tuple[str, str]] = []
+    boxes: list[QMessageBox] = []
 
     def check(version, include_prereleases, cancel_event):
         calls.append((version, include_prereleases))
         assert not cancel_event.is_set()
         return None
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "information",
-        lambda parent, title, text: messages.append((title, text)),
-    )
+    def exec_box(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
     window = MainWindow(
         settings_store=MemoryStore(), application_version="0.1.0", check_update=check
     )
     qtbot.addWidget(window)
 
     window.check_updates_button.click()
-    qtbot.waitUntil(lambda: bool(messages))
+    qtbot.waitUntil(lambda: bool(boxes))
 
     assert calls == [("0.1.0", False)]
-    assert messages == [("Updates", "Image Filter 0.1.0 is up to date.")]
+    assert [(b.windowTitle(), b.text()) for b in boxes] == [
+        ("Updates", "Image Filter 0.1.0 is up to date.")
+    ]
+    assert boxes[0].textFormat() == Qt.TextFormat.PlainText
     assert window.check_updates_button.isEnabled()
 
 
@@ -103,7 +106,9 @@ def test_test_release_setting_is_saved_and_used_by_later_check(qtbot, monkeypatc
     assert store.values[INCLUDE_TEST_RELEASES_KEY] == "true"
 
     calls: list[bool] = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok
+    )
     window = MainWindow(
         settings_store=store,
         application_version="0.1.0",
@@ -118,12 +123,13 @@ def test_test_release_setting_is_saved_and_used_by_later_check(qtbot, monkeypatc
 def test_available_update_outside_appimage_does_not_download(qtbot, monkeypatch) -> None:
     release = _release()
     downloads: list[object] = []
-    messages: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox,
-        "information",
-        lambda parent, title, text: messages.append(text),
-    )
+    boxes: list[QMessageBox] = []
+
+    def exec_box(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
     window = MainWindow(
         settings_store=MemoryStore(),
         application_version="0.1.0",
@@ -134,10 +140,11 @@ def test_available_update_outside_appimage_does_not_download(qtbot, monkeypatch)
     qtbot.addWidget(window)
 
     window.check_updates_button.click()
-    qtbot.waitUntil(lambda: bool(messages))
+    qtbot.waitUntil(lambda: bool(boxes))
 
-    assert "0.2.0" in messages[0]
-    assert "AppImage" in messages[0]
+    assert "0.2.0" in boxes[0].text()
+    assert "AppImage" in boxes[0].text()
+    assert boxes[0].textFormat() == Qt.TextFormat.PlainText
     assert downloads == []
 
 
@@ -231,16 +238,18 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
 
     assert boxes[0].windowTitle() == "Update available"
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
+    assert boxes[0].defaultButton() == boxes[0].button(QMessageBox.StandardButton.No)
     assert "<b>bold</b>" in boxes[0].text()
 
 
 def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox,
-        "warning",
-        lambda parent, title, text: warnings.append(text),
-    )
+    boxes: list[QMessageBox] = []
+
+    def exec_box(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
 
     def fail(*args):
         raise RuntimeError("private exception detail")
@@ -250,15 +259,17 @@ def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
     )
     qtbot.addWidget(window)
     window.check_updates_button.click()
-    qtbot.waitUntil(lambda: bool(warnings))
+    qtbot.waitUntil(lambda: bool(boxes))
 
-    assert "private exception detail" not in warnings[0]
+    assert "private exception detail" not in boxes[0].text()
+    assert boxes[0].textFormat() == Qt.TextFormat.PlainText
     assert window.check_updates_button.isEnabled()
 
 
 def test_cancel_button_cancels_update_check_and_restores_controls(qtbot, monkeypatch) -> None:
-    warnings: list[str] = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text: warnings.append(text))
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok
+    )
 
     def wait_for_cancel(version, include, cancel_event):
         while not cancel_event.is_set():

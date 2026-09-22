@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
-from importlib.metadata import PackageNotFoundError, version as package_version
+from importlib.metadata import version as package_version
 import os
 from pathlib import Path
 from threading import Event
@@ -116,7 +116,7 @@ def _application_version() -> str:
         return value
     try:
         return package_version("img-ai-filter")
-    except (PackageNotFoundError, Exception):
+    except Exception:
         return "0.0.0"
 
 
@@ -131,6 +131,16 @@ def _download_update(asset, directory: Path, cancel_event: Event, progress):
     return download_appimage(
         asset, directory=directory, cancel_event=cancel_event, progress=progress
     )
+
+
+def _update_message(parent, icon: QMessageBox.Icon, text: str) -> None:
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle("Updates")
+    box.setText(text)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    box.exec()
 
 
 def _quarantine_confirm_parts(
@@ -1253,9 +1263,7 @@ class MainWindow(QMainWindow):
             else:
                 message = "The update operation could not be completed."
             self.status_label.setText(message)
-            QMessageBox.warning(
-                self, "Updates", message
-            )
+            _update_message(self, QMessageBox.Icon.Warning, message)
             self._update_controls()
             return
         if kind == "check":
@@ -1269,22 +1277,24 @@ class MainWindow(QMainWindow):
     def _finish_update_check(self, release: Any) -> None:
         if release is None:
             self.status_label.setText("Image Filter is up to date.")
-            QMessageBox.information(
+            _update_message(
                 self,
-                "Updates",
+                QMessageBox.Icon.Information,
                 f"Image Filter {self._application_version} is up to date.",
             )
             return
         if not isinstance(release, UpdateRelease):
-            QMessageBox.warning(
-                self, "Updates", "The update information could not be used."
+            _update_message(
+                self,
+                QMessageBox.Icon.Warning,
+                "The update information could not be used.",
             )
             return
         installation = detect_appimage_installation(self._update_environment)
         if installation is None:
-            QMessageBox.information(
+            _update_message(
                 self,
-                "Updates",
+                QMessageBox.Icon.Information,
                 f"Image Filter {release.version} is available, but automatic installation is only available from a writable AppImage.",
             )
             return
@@ -1334,7 +1344,9 @@ class MainWindow(QMainWindow):
     def _finish_update_download(self, download: Any) -> None:
         if not isinstance(download, VerifiedDownload) or self._update_installation is None:
             self._remove_verified_download(download)
-            QMessageBox.warning(self, "Updates", "The downloaded update could not be used.")
+            _update_message(
+                self, QMessageBox.Icon.Warning, "The downloaded update could not be used."
+            )
             return
         self._verified_update = download
         answer = QMessageBox.question(
@@ -1361,7 +1373,9 @@ class MainWindow(QMainWindow):
         self._verified_update = None
         self._update_installation = None
         if not isinstance(result, InstallResult):
-            QMessageBox.warning(self, "Updates", "The installed update could not be verified.")
+            _update_message(
+                self, QMessageBox.Icon.Warning, "The installed update could not be verified."
+            )
             return
         self.status_label.setText("The update was installed.")
         answer = QMessageBox.question(
@@ -1376,8 +1390,8 @@ class MainWindow(QMainWindow):
         if self._restart_update(result.path):
             self.close()
         else:
-            QMessageBox.warning(
-                self, "Updates", "Image Filter could not be restarted."
+            _update_message(
+                self, QMessageBox.Icon.Warning, "Image Filter could not be restarted."
             )
 
     @staticmethod
