@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
         content_widget = QWidget()
         content = QVBoxLayout(content_widget)
         content.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-        content.setContentsMargins(28, 24, 28, 28)
+        content.setContentsMargins(20, 24, 20, 28)
         content.setSpacing(12)
         content.addWidget(server_heading)
         content.addLayout(server_row)
