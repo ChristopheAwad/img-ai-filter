@@ -33,9 +33,9 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )

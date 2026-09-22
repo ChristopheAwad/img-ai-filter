@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect
-from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame, QPushButton
+from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame, QLabel, QPushButton
 
 from img_ai_filter import scanner as scanner_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
@@ -96,6 +96,24 @@ def test_application_commands_are_in_fixed_header_menu(qtbot) -> None:
         and button.text() in {"Settings", "Check for Updates"}
         for button in window.findChildren(QAbstractButton)
     )
+
+
+def test_header_menu_stays_visible_at_minimum_window_size(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+
+    qtbot.waitUntil(window.isVisible)
+
+    button = window.application_menu_button
+    header = window.findChild(QFrame, "header")
+    title = window.findChild(QLabel, "title")
+    button_rect = QRect(button.mapTo(header, QPoint(0, 0)), button.size())
+    title_rect = QRect(title.mapTo(header, QPoint(0, 0)), title.size())
+    assert button.isVisible()
+    assert header.rect().contains(button_rect)
+    assert not button_rect.intersects(title_rect)
 
 
 def test_window_has_no_forget_quarantine_action(qtbot) -> None:

@@ -2,7 +2,7 @@
 
 ## Status
 
-Plan only. Do not implement until the user approves this plan.
+Implemented, GUI confirmed by user, PR opened.
 
 This is a small user-interface cleanup, not a new product feature. Do not add a
 roadmap ID and do not change `roadmap.md`.
