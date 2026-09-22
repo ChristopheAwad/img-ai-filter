@@ -15,15 +15,19 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFrame,
+    QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
@@ -384,7 +388,7 @@ class MainWindow(QMainWindow):
             self._quarantine_folder = None
 
         self.setWindowTitle("Image Filter")
-        self.resize(820, 560)
+        self.resize(820, 1020)
         self.setMinimumSize(560, 400)
 
         title = QLabel("Review images, locally")
@@ -459,14 +463,15 @@ class MainWindow(QMainWindow):
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.clicked.connect(self._show_settings)
 
-        folder_row = QHBoxLayout()
-        folder_row.setSpacing(16)
-        folder_row.addWidget(self.folder_label, 1)
-        folder_row.addWidget(self.select_button)
-        folder_row.addWidget(self.scan_button)
-        folder_row.addWidget(self.cancel_button)
-        folder_row.addWidget(self.activity_history_button)
-        folder_row.addWidget(self.settings_button)
+        folder_buttons = QGridLayout()
+        folder_buttons.setSpacing(16)
+        folder_buttons.addWidget(self.select_button, 0, 0)
+        folder_buttons.addWidget(self.scan_button, 0, 1)
+        folder_buttons.addWidget(self.cancel_button, 1, 0)
+        folder_buttons.addWidget(self.activity_history_button, 1, 1)
+        folder_buttons.addWidget(self.settings_button, 2, 0, 1, 2)
+        for column in range(2):
+            folder_buttons.setColumnStretch(column, 1)
 
         quarantine_heading = QLabel("Quarantine folder")
         quarantine_heading.setObjectName("sectionHeading")
@@ -499,12 +504,12 @@ class MainWindow(QMainWindow):
         self.move_quarantine_button.setEnabled(False)
         self.move_quarantine_button.clicked.connect(self._request_quarantine_move)
 
-        quarantine_row = QHBoxLayout()
-        quarantine_row.setSpacing(12)
-        quarantine_row.addWidget(self.quarantine_label, 1)
-        quarantine_row.addWidget(self.select_quarantine_button)
-        quarantine_row.addWidget(self.forget_quarantine_button)
-        quarantine_row.addWidget(self.move_quarantine_button)
+        quarantine_buttons = QGridLayout()
+        quarantine_buttons.setSpacing(12)
+        quarantine_buttons.addWidget(self.select_quarantine_button, 0, 0)
+        quarantine_buttons.addWidget(self.forget_quarantine_button, 1, 0)
+        quarantine_buttons.addWidget(self.move_quarantine_button, 2, 0)
+        quarantine_buttons.setColumnStretch(0, 1)
 
         self.move_log_label = QLabel("Move log: not written yet.")
         self.move_log_label.setObjectName("model")
@@ -513,6 +518,7 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("Select a folder to begin.")
         self.status_label.setObjectName("status")
+        self.status_label.setWordWrap(True)
 
         self.selection_button = QPushButton("Select All")
         self.selection_button.setObjectName("secondaryButton")
@@ -529,9 +535,14 @@ class MainWindow(QMainWindow):
         self.results_list.setObjectName("results")
         self.results_list.setAlternatingRowColors(True)
         self.results_list.setIconSize(QSize(96, 96))
+        results_policy = self.results_list.sizePolicy()
+        results_policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+        self.results_list.setSizePolicy(results_policy)
 
-        content = QVBoxLayout()
-        content.setContentsMargins(28, 24, 28, 28)
+        content_widget = QWidget()
+        content = QVBoxLayout(content_widget)
+        content.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        content.setContentsMargins(20, 24, 20, 28)
         content.setSpacing(12)
         content.addWidget(server_heading)
         content.addLayout(server_row)
@@ -539,25 +550,51 @@ class MainWindow(QMainWindow):
         content.addWidget(self.model_label)
         content.addSpacing(8)
         content.addWidget(folder_heading)
-        content.addLayout(folder_row)
+        content.addWidget(self.folder_label)
+        content.addLayout(folder_buttons)
         content.addSpacing(8)
         content.addWidget(quarantine_heading)
-        content.addLayout(quarantine_row)
+        content.addWidget(self.quarantine_label)
+        content.addLayout(quarantine_buttons)
         content.addWidget(self.move_log_label)
         content.addSpacing(6)
         content.addLayout(results_status_row)
         content.addWidget(self.results_list, 1)
 
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setWidget(content_widget)
+
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         root_layout.addWidget(header)
-        root_layout.addLayout(content, 1)
+        root_layout.addWidget(self.content_scroll, 1)
 
         root = QWidget()
         root.setLayout(root_layout)
         self.setCentralWidget(root)
         self._apply_style()
+        for button in (
+            self.test_connection_button,
+            self.select_button,
+            self.scan_button,
+            self.cancel_button,
+            self.activity_history_button,
+            self.settings_button,
+            self.select_quarantine_button,
+            self.forget_quarantine_button,
+            self.move_quarantine_button,
+            self.selection_button,
+        ):
+            button.setMinimumSize(button.minimumSizeHint())
+        self.results_list.setMinimumHeight(
+            self.results_list.minimumSizeHint().height()
+        )
         self.server_url_input.textChanged.connect(self._server_url_edited)
         self.test_connection_button.clicked.connect(self._test_connection)
         self.scan_button.clicked.connect(self._request_scan)
