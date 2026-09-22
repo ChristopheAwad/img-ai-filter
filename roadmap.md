@@ -395,7 +395,7 @@ Implementation order:
 
 ### F-011: AppImage Update Checks and Installation
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-22 (PR #12)
 - **Tier:** Tier 2, release distribution and maintenance
 - **Effort:** Large because executable replacement requires strict release parsing, isolated public-Internet transport, streamed downloads, integrity verification, recoverable same-filesystem replacement, release automation, responsive GUI progress, and failure testing
 - **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
