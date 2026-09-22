@@ -76,8 +76,8 @@ def test_launch_does_not_check_for_updates(qtbot) -> None:
     )
     qtbot.addWidget(window)
 
-    assert window.check_updates_button.text() == "Check for Updates"
-    assert window.check_updates_button.isEnabled()
+    assert window.check_updates_action.text() == "Check for Updates"
+    assert window.check_updates_action.isEnabled()
     assert calls == []
 
 
@@ -100,7 +100,7 @@ def test_manual_check_reports_up_to_date_in_background(qtbot, monkeypatch) -> No
     )
     qtbot.addWidget(window)
 
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: bool(boxes))
 
     assert calls == [("0.1.0", False)]
@@ -108,7 +108,7 @@ def test_manual_check_reports_up_to_date_in_background(qtbot, monkeypatch) -> No
         ("Updates", "Image Filter 0.1.0 is up to date.")
     ]
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
-    assert window.check_updates_button.isEnabled()
+    assert window.check_updates_action.isEnabled()
 
 
 def test_test_release_setting_is_saved_and_used_by_later_check(qtbot, monkeypatch) -> None:
@@ -132,7 +132,7 @@ def test_test_release_setting_is_saved_and_used_by_later_check(qtbot, monkeypatc
         check_update=lambda version, include, cancel: calls.append(include),
     )
     qtbot.addWidget(window)
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: window._update_thread is None)
     assert calls == [True]
 
@@ -156,7 +156,7 @@ def test_available_update_outside_appimage_does_not_download(qtbot, monkeypatch)
     )
     qtbot.addWidget(window)
 
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: bool(boxes))
 
     assert "0.2.0" in boxes[0].text()
@@ -221,7 +221,7 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
     qtbot.addWidget(window)
     monkeypatch.setattr(window, "close", lambda: stages.append("close"))
 
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: "close" in stages)
 
     assert stages == ["download", "install", f"restart:{current}", "close"]
@@ -263,7 +263,7 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
     )
     qtbot.addWidget(window)
 
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: bool(boxes))
 
     assert boxes[0].windowTitle() == "Update available"
@@ -289,12 +289,12 @@ def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
         settings_store=MemoryStore(), application_version="0.1.0", check_update=fail
     )
     qtbot.addWidget(window)
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: bool(boxes))
 
     assert "private exception detail" not in boxes[0].text()
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
-    assert window.check_updates_button.isEnabled()
+    assert window.check_updates_action.isEnabled()
 
 
 def test_transport_error_is_shown_safely_and_allows_retry(qtbot, monkeypatch) -> None:
@@ -313,7 +313,7 @@ def test_transport_error_is_shown_safely_and_allows_retry(qtbot, monkeypatch) ->
         settings_store=MemoryStore(), application_version="0.1.0", check_update=fail
     )
     qtbot.addWidget(window)
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: bool(boxes))
 
     message = "GitHub could not be reached"
@@ -321,14 +321,14 @@ def test_transport_error_is_shown_safely_and_allows_retry(qtbot, monkeypatch) ->
     assert boxes[0].windowTitle() == "Updates"
     assert boxes[0].text() == message
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
-    assert window.check_updates_button.isEnabled()
+    assert window.check_updates_action.isEnabled()
 
     boxes.clear()
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: bool(boxes))
 
     assert boxes[0].text() == message
-    assert window.check_updates_button.isEnabled()
+    assert window.check_updates_action.isEnabled()
 
 
 def test_cancel_button_cancels_update_check_and_restores_controls(qtbot, monkeypatch) -> None:
@@ -347,13 +347,13 @@ def test_cancel_button_cancels_update_check_and_restores_controls(qtbot, monkeyp
         check_update=wait_for_cancel,
     )
     qtbot.addWidget(window)
-    window.check_updates_button.click()
+    window.check_updates_action.trigger()
     qtbot.waitUntil(lambda: window.cancel_button.isEnabled())
 
     window.cancel_button.click()
     qtbot.waitUntil(lambda: window._update_thread is None)
 
-    assert window.check_updates_button.isEnabled()
+    assert window.check_updates_action.isEnabled()
     assert "cancel" in window.status_label.text().lower()
 
 

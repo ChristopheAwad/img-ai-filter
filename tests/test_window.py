@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect
-from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame
+from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame, QPushButton
 
 from img_ai_filter import scanner as scanner_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
@@ -44,10 +44,7 @@ def main_action_buttons(window: MainWindow) -> tuple[QAbstractButton, ...]:
         window.scan_button,
         window.cancel_button,
         window.activity_history_button,
-        window.settings_button,
-        window.check_updates_button,
         window.select_quarantine_button,
-        window.forget_quarantine_button,
         window.move_quarantine_button,
         window.selection_button,
     )
@@ -80,6 +77,35 @@ def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
     assert not window.selection_button.isEnabled()
     assert window.status_label.text() == "Select a folder to begin."
     assert window.results_list.count() == 0
+
+
+def test_application_commands_are_in_fixed_header_menu(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+
+    header = window.findChild(QFrame, "header")
+    assert window.application_menu_button.parent() is header
+    assert window.application_menu_button.text() == "..."
+    assert window.application_menu_button.toolTip() == "Application menu"
+    assert [action.text() for action in window.application_menu.actions()] == [
+        "Settings",
+        "Check for Updates",
+    ]
+    assert not any(
+        isinstance(button, QPushButton)
+        and button.text() in {"Settings", "Check for Updates"}
+        for button in window.findChildren(QAbstractButton)
+    )
+
+
+def test_window_has_no_forget_quarantine_action(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+
+    assert not any(
+        "forget quarantine" in button.text().lower()
+        for button in window.findChildren(QAbstractButton)
+    )
 
 
 def test_minimum_window_size_does_not_compress_action_buttons(qtbot) -> None:
@@ -363,7 +389,6 @@ def test_window_has_quarantine_controls_but_no_move_without_quarantine(qtbot) ->
 
     assert window.select_quarantine_button.text() == "Select Quarantine Folder"
     assert window.move_quarantine_button.text() == "Move Checked to Quarantine"
-    assert window.forget_quarantine_button.text() == "Forget Quarantine Folder"
     assert not window.move_quarantine_button.isEnabled()
 
 
@@ -376,6 +401,5 @@ def test_quarantine_controls_are_in_the_visible_window(qtbot) -> None:
 
     assert_widget_is_in_scroll_view(window, window.quarantine_label)
     assert_widget_is_in_scroll_view(window, window.select_quarantine_button)
-    assert_widget_is_in_scroll_view(window, window.forget_quarantine_button)
     assert_widget_is_in_scroll_view(window, window.move_quarantine_button)
     assert_widget_is_in_scroll_view(window, window.move_log_label)
