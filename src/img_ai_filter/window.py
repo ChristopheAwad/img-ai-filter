@@ -388,7 +388,7 @@ class MainWindow(QMainWindow):
             self._quarantine_folder = None
 
         self.setWindowTitle("Image Filter")
-        self.resize(820, 900)
+        self.resize(820, 1020)
         self.setMinimumSize(560, 400)
 
         title = QLabel("Review images, locally")
@@ -467,10 +467,10 @@ class MainWindow(QMainWindow):
         folder_buttons.setSpacing(16)
         folder_buttons.addWidget(self.select_button, 0, 0)
         folder_buttons.addWidget(self.scan_button, 0, 1)
-        folder_buttons.addWidget(self.cancel_button, 0, 2)
-        folder_buttons.addWidget(self.activity_history_button, 1, 0)
-        folder_buttons.addWidget(self.settings_button, 1, 1)
-        for column in range(3):
+        folder_buttons.addWidget(self.cancel_button, 1, 0)
+        folder_buttons.addWidget(self.activity_history_button, 1, 1)
+        folder_buttons.addWidget(self.settings_button, 2, 0, 1, 2)
+        for column in range(2):
             folder_buttons.setColumnStretch(column, 1)
 
         quarantine_heading = QLabel("Quarantine folder")
@@ -507,10 +507,9 @@ class MainWindow(QMainWindow):
         quarantine_buttons = QGridLayout()
         quarantine_buttons.setSpacing(12)
         quarantine_buttons.addWidget(self.select_quarantine_button, 0, 0)
-        quarantine_buttons.addWidget(self.forget_quarantine_button, 0, 1)
-        quarantine_buttons.addWidget(self.move_quarantine_button, 1, 0, 1, 2)
+        quarantine_buttons.addWidget(self.forget_quarantine_button, 1, 0)
+        quarantine_buttons.addWidget(self.move_quarantine_button, 2, 0)
         quarantine_buttons.setColumnStretch(0, 1)
-        quarantine_buttons.setColumnStretch(1, 1)
 
         self.move_log_label = QLabel("Move log: not written yet.")
         self.move_log_label.setObjectName("model")
@@ -580,6 +579,19 @@ class MainWindow(QMainWindow):
         root.setLayout(root_layout)
         self.setCentralWidget(root)
         self._apply_style()
+        for button in (
+            self.test_connection_button,
+            self.select_button,
+            self.scan_button,
+            self.cancel_button,
+            self.activity_history_button,
+            self.settings_button,
+            self.select_quarantine_button,
+            self.forget_quarantine_button,
+            self.move_quarantine_button,
+            self.selection_button,
+        ):
+            button.setMinimumSize(button.minimumSizeHint())
         self.results_list.setMinimumHeight(
             self.results_list.minimumSizeHint().height()
         )

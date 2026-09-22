@@ -90,6 +90,10 @@ def test_minimum_window_size_does_not_compress_action_buttons(qtbot) -> None:
     qtbot.waitUntil(window.isVisible)
 
     assert_buttons_are_not_compressed(window)
+    for button in main_action_buttons(window):
+        window.content_scroll.ensureWidgetVisible(button)
+        qtbot.wait(1)
+        assert_widget_is_in_scroll_view(window, button)
 
 
 def test_minimum_window_uses_vertical_not_horizontal_body_scrolling(qtbot) -> None:
