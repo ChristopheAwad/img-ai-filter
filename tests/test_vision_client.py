@@ -93,7 +93,6 @@ def test_sends_one_nonstreaming_schema_constrained_image_request() -> None:
         "ordinary",
         "screenshot",
         "captioned_meme",
-        "social_post",
         "reaction_image",
         "comic",
         "image_macro",
@@ -116,6 +115,7 @@ def test_prompt_forbids_recognized_text_and_requires_visual_reason_only() -> Non
     assert "visual" in prompt
     assert "ordinary" in prompt
     assert "uncertain" in prompt
+    assert "social_post" not in prompt
 
 
 def test_passes_cancellation_event_to_transport() -> None:

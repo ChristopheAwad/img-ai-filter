@@ -22,7 +22,6 @@ ALL_CATEGORIES = frozenset(
         "ordinary",
         "screenshot",
         "captioned_meme",
-        "social_post",
         "reaction_image",
         "comic",
         "image_macro",
@@ -34,7 +33,6 @@ CANDIDATE_CATEGORIES = frozenset(
     {
         "screenshot",
         "captioned_meme",
-        "social_post",
         "reaction_image",
         "comic",
         "image_macro",
@@ -46,7 +44,6 @@ ORDINARY = "ordinary"
 UNCERTAIN = "uncertain"
 SCREENSHOT = "screenshot"
 CAPTIONED_MEME = "captioned_meme"
-SOCIAL_POST = "social_post"
 REACTION_IMAGE = "reaction_image"
 COMIC = "comic"
 IMAGE_MACRO = "image_macro"

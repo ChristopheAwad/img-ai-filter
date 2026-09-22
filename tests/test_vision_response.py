@@ -16,7 +16,6 @@ LABELS = [
     "ordinary",
     "screenshot",
     "captioned_meme",
-    "social_post",
     "reaction_image",
     "comic",
     "image_macro",
@@ -99,6 +98,11 @@ def test_rejects_duplicate_json_keys() -> None:
 def test_rejects_unknown_or_malformed_category(category: object) -> None:
     with pytest.raises(VisionResponseError, match="category"):
         parse_vision_content(_content(category=category))
+
+
+def test_rejects_removed_social_post_category() -> None:
+    with pytest.raises(VisionResponseError, match="category"):
+        parse_vision_content(_content(category="social_post"))
 
 
 @pytest.mark.parametrize(

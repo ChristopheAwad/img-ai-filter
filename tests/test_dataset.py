@@ -101,7 +101,7 @@ def _build_dataset(
 
 def test_accepts_the_exact_minimum_verified_dataset(tmp_path: Path) -> None:
     rows, manifest_path = _build_dataset(tmp_path)
-    assert len(rows) == 335
+    assert len(rows) == 310
 
     result = validate_dataset(tmp_path, manifest_path)
 
@@ -169,7 +169,7 @@ def test_accepts_exact_65_and_75_percent_tuning_share_boundaries(
         rows, manifest_path = _build_dataset(
             root, {"comic": {"tuning": tuning, "holdout": holdout}}
         )
-        assert len(rows) == 335 - 25 + 40
+        assert len(rows) == 310 - 25 + 40
 
         result = validate_dataset(root, manifest_path)
 
@@ -407,7 +407,7 @@ def test_dataset_validation_runs_without_network(tmp_path: Path, monkeypatch) ->
     result = validate_dataset(tmp_path, manifest_path)
 
     assert result.valid is True
-    assert len(rows) == 335
+    assert len(rows) == 310
 
 
 def test_dataset_module_source_has_no_gui_dependency() -> None:

@@ -133,7 +133,6 @@ def test_mixed_scan_is_sequential_ordered_and_counted() -> None:
     [
         "screenshot",
         "captioned_meme",
-        "social_post",
         "reaction_image",
         "comic",
         "image_macro",
@@ -149,6 +148,18 @@ def test_each_candidate_category_is_returned_unchecked(category: str) -> None:
     assert candidate.reason == f"Visual reason for {category}."
     assert candidate.confidence == 1.0
     assert candidate.checked is False
+    assert summary.state is ScanState.COMPLETED
+
+
+def test_removed_social_post_category_is_not_a_candidate_and_counts_as_ordinary() -> None:
+    path = Path("one.png")
+
+    summary, _, _ = _run((path,), {path.name: _decision("social_post", 1.0)})
+
+    assert summary.candidates == ()
+    assert summary.ordinary == 1
+    assert summary.uncertain == 0
+    assert summary.analyzed == 1
     assert summary.state is ScanState.COMPLETED
 
 

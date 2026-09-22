@@ -23,7 +23,7 @@ _DATA_URL_PREFIX = "data:image/png;base64,"
 _SYSTEM_PROMPT = (
     "Classify the image by visual structure only. Do not transcribe or quote any "
     "recognized text. Give a short visual-only reason without private details. "
-    "Choose exactly one category: ordinary, screenshot, captioned_meme, social_post, "
+    "Choose exactly one category: ordinary, screenshot, captioned_meme, "
     "reaction_image, comic, image_macro, or uncertain. Use uncertain when the visual "
     "evidence is insufficient. Return only the requested JSON object."
 )

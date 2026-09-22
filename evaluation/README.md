@@ -32,7 +32,7 @@ One CSV file named `manifest.csv` beside the data folder, with these exact
 columns:
 
 - `path` — path relative to the dataset root, forward slashes, never absolute.
-- `label` — `ordinary`, `screenshot`, `captioned_meme`, `social_post`,
+- `label` — `ordinary`, `screenshot`, `captioned_meme`,
   `reaction_image`, `comic`, `image_macro`, or `uncertain`.
 - `split` — `tuning` (free to tune thresholds) or `holdout` (measured only after
   thresholds are frozen).

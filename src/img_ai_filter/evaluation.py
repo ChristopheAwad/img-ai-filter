@@ -465,7 +465,7 @@ def check_targets(run: DetectorEvaluation, targets: AcceptanceTargets) -> Target
     above("screenshot_recall", run.recall_by_label.get("screenshot"), targets.screenshot_recall)
     other = [
         run.recall_by_label.get(label)
-        for label in ("captioned_meme", "social_post", "reaction_image", "comic", "image_macro")
+        for label in ("captioned_meme", "reaction_image", "comic", "image_macro")
         if run.recall_by_label.get(label) is not None
     ]
     other_recall = sum(other) / len(other) if other else None
