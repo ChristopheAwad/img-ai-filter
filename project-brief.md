@@ -33,7 +33,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Keep folder selection separate from scanning. Never start a scan only because a folder was selected.
 - Recursively scan selected folders without following symbolic links.
 - Support PNG, JPEG, WebP, BMP, and TIFF initially.
-- Recognize screenshots, captioned memes, social-post screenshots, reaction images, comics, and image macros.
+- Recognize screenshots, captioned memes, reaction images, comics, and image macros.
 - Exclude ordinary photos from scan results.
 - Show a reason and confidence for every displayed candidate.
 - Default automatic selection to model-reported confidence of 90% or higher.

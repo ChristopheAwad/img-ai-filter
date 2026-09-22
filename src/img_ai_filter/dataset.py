@@ -19,7 +19,6 @@ MINIMUM_LABELS: dict[str, dict[str, int]] = {
     "ordinary": {"tuning": 105, "holdout": 45},
     "screenshot": {"tuning": 21, "holdout": 9},
     "captioned_meme": {"tuning": 18, "holdout": 7},
-    "social_post": {"tuning": 18, "holdout": 7},
     "reaction_image": {"tuning": 18, "holdout": 7},
     "comic": {"tuning": 18, "holdout": 7},
     "image_macro": {"tuning": 18, "holdout": 7},

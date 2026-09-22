@@ -53,7 +53,6 @@ _CANDIDATE_CATEGORIES = frozenset(
     {
         "screenshot",
         "captioned_meme",
-        "social_post",
         "reaction_image",
         "comic",
         "image_macro",
@@ -117,11 +116,7 @@ def run_server_scan(
             failed += 1
         else:
             analyzed += 1
-            if decision.category == "ordinary":
-                ordinary += 1
-            elif decision.category == "uncertain":
-                uncertain += 1
-            elif decision.category in _CANDIDATE_CATEGORIES:
+            if decision.category in _CANDIDATE_CATEGORIES:
                 candidates.append(
                     ScanCandidate(
                         path,
@@ -134,6 +129,10 @@ def run_server_scan(
                         prepared.thumbnail_height,
                     )
                 )
+            elif decision.category == "uncertain":
+                uncertain += 1
+            else:
+                ordinary += 1
         if progress is not None:
             progress(analyzed + failed, discovered)
 

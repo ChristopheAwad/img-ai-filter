@@ -13,7 +13,6 @@ VISION_CATEGORIES = frozenset(
         "ordinary",
         "screenshot",
         "captioned_meme",
-        "social_post",
         "reaction_image",
         "comic",
         "image_macro",

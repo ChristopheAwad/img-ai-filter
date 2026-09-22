@@ -32,13 +32,16 @@ One CSV file named `manifest.csv` beside the data folder, with these exact
 columns:
 
 - `path` — path relative to the dataset root, forward slashes, never absolute.
-- `label` — `ordinary`, `screenshot`, `captioned_meme`, `social_post`,
+- `label` — `ordinary`, `screenshot`, `captioned_meme`,
   `reaction_image`, `comic`, `image_macro`, or `uncertain`.
 - `split` — `tuning` (free to tune thresholds) or `holdout` (measured only after
   thresholds are frozen).
 - `source` — where the image came from, such as `local-user-supplied`.
 - `license` — a redistribution license identifier, or `local-only` for images
   that must never leave this machine.
+
+The `social_post` label is no longer supported. Relabel existing rows as
+`ordinary`, or as `uncertain` when the intended classification is ambiguous.
 
 The loader rejects absolute paths, `..` traversal, Windows drive or UNC paths,
 directories, missing files, symbolic links, unsupported extensions, duplicates,
