@@ -163,6 +163,10 @@ def test_available_update_outside_appimage_does_not_download(qtbot, monkeypatch)
     assert "AppImage" in boxes[0].text()
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
     assert downloads == []
+    assert window.status_label.text() == (
+        "Image Filter 0.2.0 is available. Automatic installation is only "
+        "available from a writable AppImage."
+    )
 
 
 def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
@@ -271,6 +275,51 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
     assert boxes[0].defaultButton() == boxes[0].button(QMessageBox.StandardButton.No)
     assert "<b>bold</b>" in boxes[0].text()
     assert detected_environments == [{"APPIMAGE": str(current)}]
+    assert window.status_label.text() == "Image Filter 0.2.0 was not downloaded."
+
+
+def test_declining_install_sets_terminal_status(qtbot, monkeypatch, tmp_path) -> None:
+    current = tmp_path / "ImageFilter.AppImage"
+    current.write_bytes(b"old appimage")
+    current.chmod(0o755)
+    release = _release()
+    downloaded = tmp_path / ".verified.download"
+
+    monkeypatch.setattr(
+        window_module,
+        "detect_appimage_installation",
+        lambda environment: _installation(current),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+
+    def download(asset, directory, cancel_event, progress):
+        downloaded.write_bytes(b"new appimage")
+        return VerifiedDownload(
+            downloaded,
+            downloaded.stat().st_size,
+            hashlib.sha256(downloaded.read_bytes()).hexdigest(),
+        )
+
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_environment={"APPIMAGE": str(current)},
+        check_update=lambda *args: release,
+        download_update=download,
+    )
+    qtbot.addWidget(window)
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: window._update_thread is None and not downloaded.exists())
+
+    assert window.status_label.text() == "The update was downloaded but not installed."
 
 
 def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:

@@ -79,6 +79,17 @@ def test_initial_window_is_waiting_for_a_folder(qtbot) -> None:
     assert window.results_list.count() == 0
 
 
+def test_review_controls_have_visible_keyboard_focus_styles(qtbot) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+
+    stylesheet = window.styleSheet()
+
+    assert "QListWidget#results:focus" in stylesheet
+    assert "QPushButton#secondaryButton:focus" in stylesheet
+    assert "outline: 0" not in stylesheet
+
+
 def test_application_commands_are_in_fixed_header_menu(qtbot) -> None:
     window = selection_window()
     qtbot.addWidget(window)
