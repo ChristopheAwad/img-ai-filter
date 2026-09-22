@@ -346,7 +346,7 @@ Implementation order:
 
 ### F-010: Self-Contained Linux Test Distribution
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-22 (PR #10)
 - **Tier:** Tier 2, release readiness and real-data testing
 - **Effort:** Large because a portable Qt desktop build requires a frozen Python runtime, native-library and plugin collection, repeatable artifact construction, clean-system smoke tests, desktop metadata, license notices, and Fedora compatibility checks
 - **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
@@ -392,6 +392,59 @@ Implementation order:
 8. Add Linux CI artifact construction, checksums, license notices, and troubleshooting documentation without publishing a release automatically.
 9. Run the complete offline suite, artifact inspection, clean-environment smoke tests, and Fedora manual checklist.
 10. Wait for explicit desktop approval before proposing any Git operation.
+
+### F-011: AppImage Update Checks and Installation
+
+- **Status:** in progress
+- **Tier:** Tier 2, release distribution and maintenance
+- **Effort:** Large because executable replacement requires strict release parsing, isolated public-Internet transport, streamed downloads, integrity verification, recoverable same-filesystem replacement, release automation, responsive GUI progress, and failure testing
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `README.md`
+- **Likely implementation files:** update release model and transport, AppImage installer, settings, main window and update worker, Linux packaging scripts and metadata, GitHub release workflow, tests, and release documentation
+- **Depends on:** shipped F-010 Linux AppImage packaging and a stable GitHub release process
+- **Blocks:** none; it removes repeated manual AppImage downloads after one updater-enabled release is installed manually
+
+Provide an explicit **Check for Updates** action that contacts GitHub only when
+selected. Stable releases are the default, with a saved option to include test
+pre-releases. When a newer compatible Linux x86-64 AppImage exists, show its
+version, channel, notes, and size before downloading. Stream and verify the
+complete artifact, replace only the currently running AppImage, retain one
+recovery backup, and ask before restarting. Source and portable-tar builds may
+check availability but must never replace their installation. Existing
+AppImages without updater code require one final manual download to bootstrap
+this feature.
+
+Dependency graph:
+
+```text
+F-010 accepted AppImage packaging
+                |
+                v
+Stable version and draft-first GitHub release process
+                |
+                v
+Strict release discovery + optional test channel
+                |
+                v
+Streamed verified AppImage download
+                |
+                v
+Recoverable replacement + explicit restart
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Complete F-010 acceptance and record the network-blocked regression baseline.
+3. Write failing settings, version, release-schema, channel, and asset-selection tests.
+4. Implement the GUI-neutral release model and manual-only metadata check through an injected transport.
+5. Write failing HTTPS, redirect, response-limit, streaming, cancellation, truncation, and digest tests.
+6. Implement the dedicated GitHub metadata transport and bounded streaming downloader without weakening private-LAN vision transport rules.
+7. Write failing installation-kind, path, permission, space, temporary-file, backup, replacement, recovery, and restart tests.
+8. Implement AppImage-only verified installation with one retained backup; never replace source or portable-tar installations.
+9. Write failing update-dialog, busy-state, progress, confirmation, cancellation, error, close, and stale-signal GUI tests.
+10. Add **Check for Updates**, the saved **Include test releases** option, explicit download/install consent, and restart choice.
+11. Add a draft-first release workflow with consistent package versions, tags, artifact names, and SHA-256 metadata.
+12. Update durable documentation, run focused tests and the complete offline suite, inspect packaged artifacts, and complete the desktop GUI checklist before any Git operation.
 
 ## Milestone 1: Desktop Foundation and Folder Scan
 

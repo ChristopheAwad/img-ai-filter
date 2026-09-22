@@ -15,6 +15,7 @@ import img_ai_filter.settings as settings_mod
 from img_ai_filter.settings import (
     AUTO_SELECT_CONFIDENCE_KEY,
     DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT,
+    INCLUDE_TEST_RELEASES_KEY,
     IniSettingsStore,
     SettingsStatus,
     clear_api_key,
@@ -23,10 +24,12 @@ from img_ai_filter.settings import (
     load_api_key,
     load_auto_select_confidence,
     load_endpoint_settings,
+    load_include_test_releases,
     load_quarantine_folder,
     save_api_key,
     save_auto_select_confidence,
     save_endpoint_settings,
+    save_include_test_releases,
     save_quarantine_folder,
     QUARANTINE_FOLDER_KEY,
 )
@@ -147,6 +150,66 @@ def test_save_auto_select_confidence_handles_write_failure() -> None:
             raise OSError("private failure")
 
     assert not save_auto_select_confidence(FailingStore(), 90)
+
+
+def test_include_test_releases_key_is_stable() -> None:
+    assert INCLUDE_TEST_RELEASES_KEY == "include_test_releases"
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (None, False),
+        ("false", False),
+        ("true", True),
+        ("", False),
+        (" true", False),
+        ("true ", False),
+        ("TRUE", False),
+        ("1", False),
+        (1, False),
+        (True, False),
+    ],
+)
+def test_include_test_releases_loads_only_canonical_values(stored, expected) -> None:
+    seed = {} if stored is None else {INCLUDE_TEST_RELEASES_KEY: stored}
+    store = InMemorySettingsStore(seed)
+
+    assert load_include_test_releases(store) is expected
+    assert store.writes == []
+
+
+def test_include_test_releases_read_failure_uses_stable_default() -> None:
+    class FailingStore:
+        def read(self, key):
+            raise OSError("private failure")
+
+    assert load_include_test_releases(FailingStore()) is False
+
+
+@pytest.mark.parametrize(("value", "stored"), [(False, "false"), (True, "true")])
+def test_include_test_releases_saves_and_round_trips(value: bool, stored: str) -> None:
+    store = InMemorySettingsStore()
+
+    assert save_include_test_releases(store, value)
+    assert store.values[INCLUDE_TEST_RELEASES_KEY] == stored
+    assert load_include_test_releases(store) is value
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", [], object()])
+def test_include_test_releases_rejects_non_booleans(value) -> None:
+    store = InMemorySettingsStore()
+
+    assert not save_include_test_releases(store, value)
+    assert store.writes == []
+
+
+def test_include_test_releases_handles_write_failure() -> None:
+    class FailingStore:
+        def write(self, key, value):
+            raise OSError("private failure")
+
+    assert not save_include_test_releases(FailingStore(), True)
 
 
 def _seed_valid(store: InMemorySettingsStore) -> None:

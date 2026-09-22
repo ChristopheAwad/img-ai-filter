@@ -13,6 +13,8 @@ contributors. Refer to the package projects for complete license text and terms.
   https://github.com/python-pillow/Pillow/blob/main/LICENSE
 - keyring 25.7.0: MIT License.
   https://github.com/jaraco/keyring/blob/main/LICENSE
+- packaging 26.3: Apache License 2.0 or BSD 2-Clause License.
+  https://github.com/pypa/packaging/blob/main/LICENSE
 - PyInstaller 6.10.0 bootloader: GPLv2 with the PyInstaller bootloader exception.
   https://pyinstaller.org/en/stable/license.html
 

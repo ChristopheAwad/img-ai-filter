@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
+from importlib.metadata import version as package_version
 import os
 from pathlib import Path
 from threading import Event
@@ -13,6 +14,8 @@ from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QAbstractItemView,
+    QApplication,
+    QCheckBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -77,16 +80,67 @@ from img_ai_filter.settings import (
     SettingsStatus,
     clear_quarantine_folder,
     load_auto_select_confidence,
+    load_include_test_releases,
     load_quarantine_folder,
     load_vision_endpoint_settings,
     save_quarantine_folder,
     save_auto_select_confidence,
+    save_include_test_releases,
     save_vision_endpoint_settings,
+)
+from img_ai_filter.update_install import (
+    AppImageInstallation,
+    InstallError,
+    InstallResult,
+    detect_appimage_installation,
+    install_appimage,
+    restart_appimage,
+)
+from img_ai_filter.update_release import UpdateMetadataError, UpdateRelease, select_update
+from img_ai_filter.update_transport import (
+    UpdateCancelled,
+    UpdateTransportError,
+    VerifiedDownload,
+    download_appimage,
+    fetch_release_metadata,
 )
 from img_ai_filter.vision_connection import VisionConnectionError, discover_koboldcpp
 
 
 DEFAULT_SERVER_URL = "http://192.168.0.239:5001/v1/"
+
+
+def _application_version() -> str:
+    value = QApplication.applicationVersion()
+    if value:
+        return value
+    try:
+        return package_version("img-ai-filter")
+    except Exception:
+        return "0.0.0"
+
+
+def _check_update(version: str, include: bool, cancel_event: Event) -> UpdateRelease | None:
+    metadata = fetch_release_metadata(cancel_event=cancel_event)
+    return select_update(
+        metadata, installed_version=version, include_prereleases=include
+    )
+
+
+def _download_update(asset, directory: Path, cancel_event: Event, progress):
+    return download_appimage(
+        asset, directory=directory, cancel_event=cancel_event, progress=progress
+    )
+
+
+def _update_message(parent, icon: QMessageBox.Icon, text: str) -> None:
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle("Updates")
+    box.setText(text)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    box.exec()
 
 
 def _quarantine_confirm_parts(
@@ -245,6 +299,7 @@ class CandidateSelectionSettingsDialog(QDialog):
         super().__init__(parent)
         self._store = store
         self.selected_threshold = threshold
+        self.selected_include_test_releases = load_include_test_releases(store)
         self.setWindowTitle("Settings")
 
         label = QLabel("Automatic-selection confidence threshold")
@@ -264,6 +319,12 @@ class CandidateSelectionSettingsDialog(QDialog):
             "confidence meets this threshold. Existing review choices do not change."
         )
         self.explanation_label.setWordWrap(True)
+        self.include_test_releases_checkbox = QCheckBox(
+            "Include test releases when checking for updates"
+        )
+        self.include_test_releases_checkbox.setChecked(
+            self.selected_include_test_releases
+        )
         self.error_label = QLabel()
         self.error_label.setObjectName("status")
 
@@ -280,15 +341,25 @@ class CandidateSelectionSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(field)
         layout.addWidget(self.explanation_label)
+        layout.addWidget(self.include_test_releases_checkbox)
         layout.addWidget(self.error_label)
         layout.addLayout(buttons)
 
     def _save(self) -> None:
         value = self.threshold_spin.value()
-        if not save_auto_select_confidence(self._store, value):
+        include = self.include_test_releases_checkbox.isChecked()
+        old_threshold = self.selected_threshold
+        old_include = self.selected_include_test_releases
+        if value != old_threshold and not save_auto_select_confidence(self._store, value):
             self.error_label.setText("The automatic-selection threshold could not be saved.")
             return
+        if include != old_include and not save_include_test_releases(self._store, include):
+            if value != old_threshold:
+                save_auto_select_confidence(self._store, old_threshold)
+            self.error_label.setText("The update release channel could not be saved.")
+            return
         self.selected_threshold = value
+        self.selected_include_test_releases = include
         self.accept()
 
 
@@ -308,6 +379,12 @@ class MainWindow(QMainWindow):
         resolver: Callable[..., Any] | None = None,
         monotonic: Callable[[], float] = time.perf_counter,
         utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        application_version: str | None = None,
+        update_environment: Any = None,
+        check_update: Callable[..., Any] = _check_update,
+        download_update: Callable[..., Any] = _download_update,
+        install_update: Callable[..., Any] = install_appimage,
+        restart_update: Callable[..., Any] = restart_appimage,
     ) -> None:
         super().__init__()
         self._scan = scan
@@ -323,6 +400,21 @@ class MainWindow(QMainWindow):
         self._resolver = resolver
         self._monotonic = monotonic
         self._utc_now = utc_now
+        self._application_version = application_version or _application_version()
+        self._update_environment = os.environ if update_environment is None else update_environment
+        self._check_update = check_update
+        self._download_update = download_update
+        self._install_update = install_update
+        self._restart_update = restart_update
+        self._include_test_releases = load_include_test_releases(self._settings_store)
+        self._update_thread: OperationThread | None = None
+        self._update_cancel_event: Event | None = None
+        self._update_kind: str | None = None
+        self._update_result: Any = None
+        self._update_error: Exception | None = None
+        self._update_generation = 0
+        self._update_installation: AppImageInstallation | None = None
+        self._verified_update: VerifiedDownload | None = None
         self._selected_folder: Path | None = None
         self._results_folder: Path | None = None
         self._quarantine_folder: Path | None = None
@@ -463,13 +555,19 @@ class MainWindow(QMainWindow):
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.clicked.connect(self._show_settings)
 
+        self.check_updates_button = QPushButton("Check for Updates")
+        self.check_updates_button.setObjectName("secondaryButton")
+        self.check_updates_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_updates_button.clicked.connect(self._request_update_check)
+
         folder_buttons = QGridLayout()
         folder_buttons.setSpacing(16)
         folder_buttons.addWidget(self.select_button, 0, 0)
         folder_buttons.addWidget(self.scan_button, 0, 1)
         folder_buttons.addWidget(self.cancel_button, 1, 0)
         folder_buttons.addWidget(self.activity_history_button, 1, 1)
-        folder_buttons.addWidget(self.settings_button, 2, 0, 1, 2)
+        folder_buttons.addWidget(self.settings_button, 2, 0)
+        folder_buttons.addWidget(self.check_updates_button, 2, 1)
         for column in range(2):
             folder_buttons.setColumnStretch(column, 1)
 
@@ -586,6 +684,7 @@ class MainWindow(QMainWindow):
             self.cancel_button,
             self.activity_history_button,
             self.settings_button,
+            self.check_updates_button,
             self.select_quarantine_button,
             self.forget_quarantine_button,
             self.move_quarantine_button,
@@ -615,7 +714,7 @@ class MainWindow(QMainWindow):
         self.model_label.setText("Model: not discovered")
 
     def _server_url_edited(self) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         self._config = None
         self._show_no_model()
@@ -623,6 +722,8 @@ class MainWindow(QMainWindow):
 
     def _update_controls(self) -> None:
         active = self._thread is not None
+        update_active = self._update_thread is not None
+        busy = active or update_active
         ready = self._config is not None and bool(self._config.model)
         quarantine_ready = (
             self._quarantine_folder is not None and not self._quarantine_missing
@@ -638,25 +739,29 @@ class MainWindow(QMainWindow):
                 pass
             else:
                 move_roots_ready = True
-        self.select_button.setEnabled(not active)
-        self.server_url_input.setEnabled(not active)
-        self.test_connection_button.setEnabled(not active)
+        self.select_button.setEnabled(not busy)
+        self.server_url_input.setEnabled(not busy)
+        self.test_connection_button.setEnabled(not busy)
         self.scan_button.setEnabled(
-            not active and self._selected_folder is not None and ready
+            not busy and self._selected_folder is not None and ready
         )
-        self.cancel_button.setEnabled(active and self._operation_kind == "scan")
-        self.select_quarantine_button.setEnabled(not active)
-        self.forget_quarantine_button.setEnabled(not active and quarantine_ready)
+        self.cancel_button.setEnabled(
+            (active and self._operation_kind == "scan")
+            or (update_active and self._update_kind in {"check", "download"})
+        )
+        self.select_quarantine_button.setEnabled(not busy)
+        self.forget_quarantine_button.setEnabled(not busy and quarantine_ready)
         self.move_quarantine_button.setEnabled(
-            not active
+            not busy
             and move_roots_ready
             and self._any_checked()
         )
         selection_text, selection_ready = self._selection_button_state()
         self.selection_button.setText(selection_text)
-        self.selection_button.setEnabled(not active and selection_ready)
-        self.activity_history_button.setEnabled(not active)
-        self.settings_button.setEnabled(not active)
+        self.selection_button.setEnabled(not busy and selection_ready)
+        self.activity_history_button.setEnabled(not busy)
+        self.settings_button.setEnabled(not busy)
+        self.check_updates_button.setEnabled(not busy)
 
     def _selection_button_state(self) -> tuple[str, bool]:
         count = self.results_list.count()
@@ -689,7 +794,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _test_connection(self) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         try:
             config = build_vision_endpoint_config(
@@ -718,7 +823,7 @@ class MainWindow(QMainWindow):
         kind: str,
         operation: Callable[[Callable[[int, int], None]], Any],
     ) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         self._generation += 1
         generation = self._generation
@@ -832,6 +937,7 @@ class MainWindow(QMainWindow):
     def _request_scan(self) -> None:
         if (
             self._thread is not None
+            or self._update_thread is not None
             or self._selected_folder is None
             or self._config is None
             or not self._config.model
@@ -904,6 +1010,12 @@ class MainWindow(QMainWindow):
         self._scan_timer.start()
 
     def _cancel_scan(self) -> None:
+        if self._update_thread is not None and self._update_kind in {"check", "download"}:
+            if self._update_cancel_event is not None:
+                self._update_cancel_event.set()
+            self.status_label.setText("Cancelling update operation...")
+            self.cancel_button.setEnabled(False)
+            return
         if self._thread is None or self._operation_kind != "scan":
             return
         if self._cancel_event is not None:
@@ -1041,12 +1153,12 @@ class MainWindow(QMainWindow):
         return result
 
     def _show_activity_history(self) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         ActivityHistoryDialog(self._settings_store, self).exec()
 
     def _show_settings(self) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         dialog = CandidateSelectionSettingsDialog(
             self._settings_store,
@@ -1055,6 +1167,232 @@ class MainWindow(QMainWindow):
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._auto_select_confidence_percent = dialog.selected_threshold
+            self._include_test_releases = getattr(
+                dialog,
+                "selected_include_test_releases",
+                load_include_test_releases(self._settings_store),
+            )
+
+    def _request_update_check(self) -> None:
+        if self._thread is not None or self._update_thread is not None:
+            return
+        cancel_event = Event()
+        self._update_cancel_event = cancel_event
+        self.status_label.setText("Checking for updates...")
+
+        def operation(progress: Callable[[int, int], None]) -> Any:
+            return self._check_update(
+                self._application_version,
+                self._include_test_releases,
+                cancel_event,
+            )
+
+        self._start_update_operation("check", operation)
+
+    def _start_update_operation(
+        self,
+        kind: str,
+        operation: Callable[[Callable[[int, int], None]], Any],
+    ) -> None:
+        if self._thread is not None or self._update_thread is not None:
+            return
+        self._update_generation += 1
+        generation = self._update_generation
+        self._update_kind = kind
+        self._update_result = None
+        self._update_error = None
+        thread = OperationThread(operation, self)
+        thread.progress.connect(
+            lambda done, total, token=generation: self._update_progress(
+                token, done, total
+            )
+        )
+        thread.succeeded.connect(
+            lambda result, token=generation: self._update_succeeded(token, result)
+        )
+        thread.failed.connect(
+            lambda error, token=generation: self._update_failed(token, error)
+        )
+        thread.finished.connect(
+            lambda token=generation, current=thread: self._update_finished(
+                token, current
+            )
+        )
+        self._update_thread = thread
+        self._update_controls()
+        thread.start()
+
+    def _update_is_current(self, generation: int) -> bool:
+        return generation == self._update_generation and not self._closing
+
+    def _update_progress(self, generation: int, done: int, total: int) -> None:
+        if not self._update_is_current(generation) or self._update_kind != "download":
+            return
+        self.status_label.setText(f"Downloading update: {done} of {total} bytes.")
+
+    def _update_succeeded(self, generation: int, result: Any) -> None:
+        if self._update_is_current(generation):
+            self._update_result = result
+
+    def _update_failed(self, generation: int, error: Exception) -> None:
+        if self._update_is_current(generation):
+            self._update_error = error
+
+    def _update_finished(self, generation: int, thread: OperationThread) -> None:
+        thread.deleteLater()
+        if self._update_thread is not thread:
+            return
+        kind = self._update_kind
+        result = self._update_result
+        error = self._update_error
+        current = self._update_is_current(generation)
+        self._update_thread = None
+        self._update_cancel_event = None
+        self._update_kind = None
+        self._update_result = None
+        self._update_error = None
+        if not current:
+            if self._closing:
+                QTimer.singleShot(0, self.close)
+            return
+        if error is not None:
+            if isinstance(error, UpdateCancelled):
+                message = "The update operation was cancelled."
+            elif isinstance(error, (UpdateTransportError, UpdateMetadataError, InstallError)):
+                message = str(error)
+            else:
+                message = "The update operation could not be completed."
+            self.status_label.setText(message)
+            _update_message(self, QMessageBox.Icon.Warning, message)
+            self._update_controls()
+            return
+        if kind == "check":
+            self._finish_update_check(result)
+        elif kind == "download":
+            self._finish_update_download(result)
+        elif kind == "install":
+            self._finish_update_install(result)
+        self._update_controls()
+
+    def _finish_update_check(self, release: Any) -> None:
+        if release is None:
+            self.status_label.setText("Image Filter is up to date.")
+            _update_message(
+                self,
+                QMessageBox.Icon.Information,
+                f"Image Filter {self._application_version} is up to date.",
+            )
+            return
+        if not isinstance(release, UpdateRelease):
+            _update_message(
+                self,
+                QMessageBox.Icon.Warning,
+                "The update information could not be used.",
+            )
+            return
+        installation = detect_appimage_installation(self._update_environment)
+        if installation is None:
+            _update_message(
+                self,
+                QMessageBox.Icon.Information,
+                f"Image Filter {release.version} is available, but automatic installation is only available from a writable AppImage.",
+            )
+            return
+        channel = "test" if release.prerelease else "stable"
+        text = (
+            f"Image Filter {release.version} ({channel}) is available.\n"
+            f"Download size: {release.asset.size} bytes.\n\n"
+            f"{release.notes}\n\n"
+            "Checking and downloading contacts GitHub and shares your IP address with GitHub. Download this update?"
+        )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Update available")
+        box.setText(text)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        answer = box.exec()
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._update_installation = installation
+        cancel_event = Event()
+        self._update_cancel_event = cancel_event
+        self.status_label.setText("Downloading update...")
+
+        def operation(progress: Callable[[int, int], None]) -> Any:
+            return self._download_update(
+                release.asset,
+                installation.path.parent,
+                cancel_event,
+                progress,
+            )
+
+        self._start_update_operation("download", operation)
+
+    @staticmethod
+    def _remove_verified_download(download: Any) -> None:
+        if not isinstance(download, VerifiedDownload):
+            return
+        try:
+            download.path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _finish_update_download(self, download: Any) -> None:
+        if not isinstance(download, VerifiedDownload) or self._update_installation is None:
+            self._remove_verified_download(download)
+            _update_message(
+                self, QMessageBox.Icon.Warning, "The downloaded update could not be used."
+            )
+            return
+        self._verified_update = download
+        answer = QMessageBox.question(
+            self,
+            "Install update?",
+            "The update was downloaded and verified. Install it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._remove_verified_download(download)
+            self._verified_update = None
+            self._update_installation = None
+            return
+        installation = self._update_installation
+        self.status_label.setText("Installing update...")
+
+        def operation(progress: Callable[[int, int], None]) -> Any:
+            return self._install_update(installation, download)
+
+        self._start_update_operation("install", operation)
+
+    def _finish_update_install(self, result: Any) -> None:
+        self._verified_update = None
+        self._update_installation = None
+        if not isinstance(result, InstallResult):
+            _update_message(
+                self, QMessageBox.Icon.Warning, "The installed update could not be verified."
+            )
+            return
+        self.status_label.setText("The update was installed.")
+        answer = QMessageBox.question(
+            self,
+            "Restart Image Filter?",
+            "The update was installed. Restart Image Filter now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self._restart_update(result.path):
+            self.close()
+        else:
+            _update_message(
+                self, QMessageBox.Icon.Warning, "Image Filter could not be restarted."
+            )
 
     @staticmethod
     def _summary_text(summary: ScanSummary) -> str:
@@ -1099,7 +1437,7 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def _choose_quarantine(self) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         starting_folder = (
             str(self._quarantine_folder) if self._quarantine_folder is not None else ""
@@ -1135,7 +1473,7 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def _forget_quarantine(self) -> None:
-        if self._thread is not None:
+        if self._thread is not None or self._update_thread is not None:
             return
         try:
             clear_quarantine_folder(self._settings_store)
@@ -1149,6 +1487,7 @@ class MainWindow(QMainWindow):
     def _request_quarantine_move(self) -> None:
         if (
             self._thread is not None
+            or self._update_thread is not None
             or self._selected_folder is None
             or self._quarantine_folder is None
         ):
@@ -1350,6 +1689,7 @@ class MainWindow(QMainWindow):
             self._record_scan(None, None, forced_outcome="cancelled")
         self._closing = True
         self._generation += 1
+        self._update_generation += 1
         if self._cancel_event is not None:
             self._cancel_event.set()
         transport = self._active_transport
@@ -1366,6 +1706,19 @@ class MainWindow(QMainWindow):
             if self._operation_kind == "quarantine":
                 self._record_quarantine(thread.result, thread.error)
             self._thread = None
+        update_thread = self._update_thread
+        if update_thread is not None:
+            if self._update_kind == "install" and update_thread.isRunning():
+                event.ignore()
+                return
+            if self._update_cancel_event is not None:
+                self._update_cancel_event.set()
+            update_thread.quit()
+            update_thread.wait(2000)
+            if update_thread.isRunning():
+                event.ignore()
+                return
+            self._update_thread = None
         event.accept()
 
     def _apply_style(self) -> None:

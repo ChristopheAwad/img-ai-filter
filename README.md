@@ -139,16 +139,16 @@ sha256sum --check SHA256SUMS
 To use the AppImage:
 
 ```bash
-chmod +x ImageFilter-0.1.0-x86_64.AppImage
-./ImageFilter-0.1.0-x86_64.AppImage
+chmod +x ImageFilter-0.2.0-x86_64.AppImage
+./ImageFilter-0.2.0-x86_64.AppImage
 ```
 
 If AppImage mounting is unavailable, extract the fallback without installing
 Python or FUSE:
 
 ```bash
-tar -xzf ImageFilter-0.1.0-linux-x86_64.tar.gz
-./ImageFilter-0.1.0-linux-x86_64/image-filter
+tar -xzf ImageFilter-0.2.0-linux-x86_64.tar.gz
+./ImageFilter-0.2.0-linux-x86_64/image-filter
 ```
 
 The package still needs a normal Linux desktop, graphics drivers, display
@@ -157,6 +157,33 @@ history use the normal per-user Qt configuration location. Quarantine move logs
 are written only in the selected quarantine folder. If startup fails, launch
 from a terminal and retain its error text. Portal or FUSE errors do not require
 root access; use the tarball fallback when FUSE is the problem.
+
+## AppImage Updates
+
+Select **Check for Updates** when you want Image Filter to check its GitHub
+releases. The app does not check at startup or on a timer. The request gives
+GitHub and its download infrastructure your IP address and request timing. It
+does not send images, image paths, KoboldCpp settings, credentials, activity
+history, or a machine identifier.
+
+Stable releases are checked by default. **Settings** can include test releases.
+Test releases can contain unfinished changes and have more risk than stable
+releases.
+
+When a newer Linux x86-64 AppImage is available, the app shows its version,
+channel, notes, and size before download. It streams the file to the current
+AppImage folder, verifies GitHub's SHA-256 release digest, asks again before
+installation, and keeps the previous file as `<AppImage name>.backup`. It asks
+before restarting. HTTPS and SHA-256 protect the transfer from corruption, but
+they do not protect against compromise of this project's GitHub publishing
+account.
+
+Automatic installation works only when the app runs from a writable AppImage.
+Source and portable-tar launches can check availability but do not replace
+themselves. The first updater-enabled AppImage must be downloaded manually once;
+later AppImages can replace themselves. To recover manually, close Image Filter,
+move the current AppImage aside, rename its `.backup` file to the original name,
+and ensure it is executable.
 
 ## Tests
 
