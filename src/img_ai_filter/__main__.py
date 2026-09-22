@@ -1,7 +1,7 @@
 """Application launch entry point."""
 
 import sys
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 from img_ai_filter.platform_integration import configure_native_file_dialogs
 
@@ -14,11 +14,18 @@ from img_ai_filter.packaging import application_icon_path
 from img_ai_filter.window import MainWindow
 
 
+def _application_version() -> str:
+    try:
+        return version("img-ai-filter")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
 def main() -> int:
     smoke_test = sys.argv[1:] == ["--smoke-test"]
     app = QApplication(sys.argv)
     app.setApplicationName("Image Filter")
-    app.setApplicationVersion(version("img-ai-filter"))
+    app.setApplicationVersion(_application_version())
     icon = application_icon_path()
     if icon is not None:
         app.setWindowIcon(QIcon(str(icon)))

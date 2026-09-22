@@ -93,7 +93,6 @@ def prepare_appdir(payload: Path, appdir: Path, packaging_dir: Path) -> None:
         (packaging_dir / "AppRun", appdir / "AppRun"),
         (desktop, appdir / desktop.name),
         (desktop, appdir / "usr/share/applications" / desktop.name),
-        (metainfo, appdir / "usr/share/metainfo" / metainfo.name),
         (metainfo, appdir / "usr/share/metainfo" / f"{app_id}.appdata.xml"),
         (icon, appdir / f"{app_id}.svg"),
         (icon, appdir / "usr/share/icons/hicolor/scalable/apps" / f"{app_id}.svg"),

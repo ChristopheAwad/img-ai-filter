@@ -30,6 +30,8 @@ jobs:
           printf '%s  %s\n' '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d' appimage-runtime | sha256sum --check
           chmod +x appimagetool
       - name: Build artifacts
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: python tools/build_linux.py --appimagetool ./appimagetool --runtime ./appimage-runtime
       - name: Smoke test tar payload
         env:

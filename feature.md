@@ -58,6 +58,12 @@ container; these are normal desktop host libraries and require the planned
 Fedora desktop acceptance test. Implementation is waiting for that test and
 explicit user approval.
 
+The implemented desktop identifier is `io.github.img_ai_filter.ImageFilter`
+rather than the plan's preferred personal-account identifier. It is used only
+for Linux desktop metadata and icon resources; the existing Qt organization and
+application names remain unchanged, so packaged builds retain the same
+`QSettings` identity as source builds.
+
 ## Purpose
 
 Make Image Filter practical to test on a separate Fedora x86-64 desktop without

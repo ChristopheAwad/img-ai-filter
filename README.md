@@ -88,6 +88,41 @@ Activate the virtual environment, then run:
 python -m img_ai_filter
 ```
 
+## Usage
+
+1. Start KoboldCpp with a vision-capable GGUF and matching `mmproj`.
+2. Enter its `/v1/` base URL. The default is
+   `http://192.168.0.239:5001/v1/`.
+3. Select **Test Connection**. The app shows the KoboldCpp version and discovered
+   model when the server is ready.
+4. Select a test folder with **Select Folder**.
+5. Select **Scan Folder**, read the transfer warning, and consent only if the
+   displayed destination is correct.
+6. Use **Settings** to change the automatic-selection confidence threshold if
+   needed. It accepts 50% through 100% and applies to future scan results only.
+7. Optionally select **Select Quarantine Folder**, review the previews, use
+   **Select All** or **Clear All** if useful, and choose **Move Checked to
+   Quarantine** after reading the exact confirmation details.
+8. Select **Activity History** while the app is idle to inspect scan and
+   quarantine events or clear the saved app history.
+
+Selecting a folder does not search it, load images, or contact the server.
+**Scan Folder** is enabled only after a folder is selected and the connection
+test has discovered a model.
+
+During an approved scan, supported images are resized and converted to PNG in
+memory, then sent sequentially. The app shows only screenshot/meme-style
+candidates. It does not rename, move, delete, or edit source images.
+
+The default automatic-selection threshold is 90%. This confidence is reported
+by the selected model and is not a calibrated probability or accuracy
+guarantee. **Settings** can save an integer threshold from 50% through 100%.
+Changing it does not alter current review choices; the next scan uses it for new
+rows. The bulk-selection control changes only current review state: it shows
+**Select All** while any row is unchecked, and **Clear All** when every row is
+checked. Automatic selection never starts a quarantine move, which still
+requires exact-path confirmation.
+
 ## Linux Test Package
 
 The Linux x86-64 test distribution includes Python, PySide6, Pillow, keyring,
@@ -122,39 +157,6 @@ history use the normal per-user Qt configuration location. Quarantine move logs
 are written only in the selected quarantine folder. If startup fails, launch
 from a terminal and retain its error text. Portal or FUSE errors do not require
 root access; use the tarball fallback when FUSE is the problem.
-
-1. Start KoboldCpp with a vision-capable GGUF and matching `mmproj`.
-2. Enter its `/v1/` base URL. The default is
-   `http://192.168.0.239:5001/v1/`.
-3. Select **Test Connection**. The app shows the KoboldCpp version and discovered
-   model when the server is ready.
-4. Select a test folder with **Select Folder**.
-5. Select **Scan Folder**, read the transfer warning, and consent only if the
-   displayed destination is correct.
-6. Use **Settings** to change the automatic-selection confidence threshold if
-   needed. It accepts 50% through 100% and applies to future scan results only.
-7. Optionally select **Select Quarantine Folder**, review the previews, use
-   **Select All** or **Clear All** if useful, and choose **Move Checked to
-   Quarantine** after reading the exact confirmation details.
-8. Select **Activity History** while the app is idle to inspect scan and
-   quarantine events or clear the saved app history.
-
-Selecting a folder does not search it, load images, or contact the server.
-**Scan Folder** is enabled only after a folder is selected and the connection
-test has discovered a model.
-
-During an approved scan, supported images are resized and converted to PNG in
-memory, then sent sequentially. The app shows only screenshot/meme-style
-candidates. It does not rename, move, delete, or edit source images.
-
-The default automatic-selection threshold is 90%. This confidence is reported
-by the selected model and is not a calibrated probability or accuracy
-guarantee. **Settings** can save an integer threshold from 50% through 100%.
-Changing it does not alter current review choices; the next scan uses it for new
-rows. The bulk-selection control changes only current review state: it shows
-**Select All** while any row is unchecked, and **Clear All** when every row is
-checked. Automatic selection never starts a quarantine move, which still
-requires exact-path confirmation.
 
 ## Tests
 

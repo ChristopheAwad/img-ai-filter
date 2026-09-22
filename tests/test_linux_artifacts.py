@@ -9,6 +9,12 @@ import tarfile
 import pytest
 
 
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="Linux artifact permissions and symlinks require POSIX",
+)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS_PATH = ROOT / "tools" / "linux_artifacts.py"
 

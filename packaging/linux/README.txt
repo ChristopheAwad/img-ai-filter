@@ -1,4 +1,4 @@
-Image Filter 0.1.0 - Linux x86-64 Test Distribution
+Image Filter - Linux x86-64 Test Distribution
 
 This package includes Python and the required Python libraries. It does not
 include KoboldCpp, a GGUF vision model, or the matching mmproj file.
