@@ -40,6 +40,9 @@ columns:
 - `license` — a redistribution license identifier, or `local-only` for images
   that must never leave this machine.
 
+The `social_post` label is no longer supported. Relabel existing rows as
+`ordinary`, or as `uncertain` when the intended classification is ambiguous.
+
 The loader rejects absolute paths, `..` traversal, Windows drive or UNC paths,
 directories, missing files, symbolic links, unsupported extensions, duplicates,
 blank fields, unknown labels or splits, and malformed CSV. Errors include the

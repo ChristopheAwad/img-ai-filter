@@ -118,6 +118,20 @@ def test_prompt_forbids_recognized_text_and_requires_visual_reason_only() -> Non
     assert "social_post" not in prompt
 
 
+def test_rejects_removed_social_post_response() -> None:
+    content = json.dumps(
+        {
+            "category": "social_post",
+            "reason": "The image resembles a social media post.",
+            "confidence": 0.95,
+        }
+    )
+    transport = FakeTransport(_response(content))
+
+    with pytest.raises(VisionClientError, match="invalid response"):
+        classify_image(_config(), "data:image/png;base64,aQ==", transport)
+
+
 def test_passes_cancellation_event_to_transport() -> None:
     transport = FakeTransport(_response(_decision_content()))
     cancel = Event()
