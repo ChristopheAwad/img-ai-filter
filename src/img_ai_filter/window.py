@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
         self.test_connection_button.clicked.connect(self._test_connection)
         self.scan_button.clicked.connect(self._request_scan)
         self.cancel_button.clicked.connect(self._cancel_operation)
-        self.results_list.itemChanged.connect(lambda *_: self._update_controls())
+        self.results_list.itemChanged.connect(self._candidate_item_changed)
         self._update_controls()
 
     @staticmethod
@@ -795,6 +795,16 @@ class MainWindow(QMainWindow):
             if self.results_list.item(index).checkState() != Qt.CheckState.Checked:
                 return "Select All", True
         return "Clear All", True
+
+    def _candidate_item_changed(self, item: QListWidgetItem) -> None:
+        row = self.results_list.itemWidget(item)
+        if row is not None:
+            checkbox = row.findChild(QCheckBox, "candidateCheckBox")
+            if checkbox is not None:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(item.checkState() == Qt.CheckState.Checked)
+                checkbox.blockSignals(False)
+        self._update_controls()
 
     def _toggle_selection(self) -> None:
         count = self.results_list.count()
@@ -1097,12 +1107,22 @@ class MainWindow(QMainWindow):
                 if candidate.confidence >= threshold
                 else Qt.CheckState.Unchecked
             )
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             self.results_list.addItem(item)
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(8, 7, 8, 7)
             row_layout.setSpacing(12)
+            checkbox = QCheckBox()
+            checkbox.setObjectName("candidateCheckBox")
+            checkbox.setAccessibleName(f"Select {candidate.path}")
+            checkbox.setChecked(item.checkState() == Qt.CheckState.Checked)
+            checkbox.toggled.connect(
+                lambda checked, candidate_item=item: candidate_item.setCheckState(
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                )
+            )
+            row_layout.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
             if not preview.isNull():
                 preview_label = QLabel()
                 preview_label.setObjectName("candidatePreview")
@@ -1898,6 +1918,10 @@ class MainWindow(QMainWindow):
             }
             QListWidget#results:focus {
                 border: 2px solid #136f8a;
+            }
+            QListWidget#results::indicator {
+                width: 0;
+                height: 0;
             }
             QLabel#candidatePath {
                 color: #132238;

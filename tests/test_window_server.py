@@ -9,7 +9,8 @@ from threading import Event
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QDialog, QFileDialog, QLabel, QMessageBox
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QCheckBox, QDialog, QFileDialog, QLabel, QMessageBox
 
 import img_ai_filter.window as window_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
@@ -439,16 +440,23 @@ def test_candidate_rows_include_details_and_start_unchecked(
     path_label = row.findChild(QLabel, "candidatePath")
     meta_label = row.findChild(QLabel, "candidateMeta")
     reason_label = row.findChild(QLabel, "candidateReason")
+    checkbox = row.findChild(QCheckBox, "candidateCheckBox")
     preview_label = row.findChild(QLabel, "candidatePreview")
     assert path_label.text() == str(candidate_path)
     assert path_label.wordWrap()
     assert meta_label.text() == "captioned meme | 87%"
     assert reason_label.text() == "Large caption above a reaction image."
     assert reason_label.wordWrap()
+    assert checkbox is not None
     assert preview_label is not None
     assert not preview_label.pixmap().isNull()
     assert item.data(Qt.ItemDataRole.UserRole) is summary.candidates[0]
     assert item.checkState() == Qt.CheckState.Unchecked
+
+    QTest.mouseClick(checkbox, Qt.MouseButton.LeftButton)
+
+    assert item.checkState() == Qt.CheckState.Checked
+    assert window.selection_button.text() == "Clear All"
     assert window.status_label.text() == (
         "Completed: 3 discovered, 3 analyzed, 1 candidate, 1 ordinary, "
         "1 uncertain, 0 failed, 0 unreadable folders. Elapsed: <1 sec."
@@ -1298,7 +1306,7 @@ def test_candidate_rows_store_candidate_and_show_one_custom_thumbnail(
 
     assert item.data(Qt.ItemDataRole.UserRole) is candidate
     assert item.icon().isNull()
-    assert item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert not item.flags() & Qt.ItemFlag.ItemIsUserCheckable
     assert preview is not None
     assert not preview.pixmap().isNull()
 
