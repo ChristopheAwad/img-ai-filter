@@ -139,16 +139,16 @@ sha256sum --check SHA256SUMS
 To use the AppImage:
 
 ```bash
-chmod +x ImageFilter-0.2.1-x86_64.AppImage
-./ImageFilter-0.2.1-x86_64.AppImage
+chmod +x ImageFilter-0.2.2-x86_64.AppImage
+./ImageFilter-0.2.2-x86_64.AppImage
 ```
 
 If AppImage mounting is unavailable, extract the fallback without installing
 Python or FUSE:
 
 ```bash
-tar -xzf ImageFilter-0.2.1-linux-x86_64.tar.gz
-./ImageFilter-0.2.1-linux-x86_64/image-filter
+tar -xzf ImageFilter-0.2.2-linux-x86_64.tar.gz
+./ImageFilter-0.2.2-linux-x86_64/image-filter
 ```
 
 The package still needs a normal Linux desktop, graphics drivers, display
