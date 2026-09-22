@@ -448,7 +448,7 @@ Implementation order:
 
 ### F-012: Candidate Review UI Reliability
 
-- **Status:** in progress
+- **Status:** shipped 2026-09-22 (PR #19)
 - **Tier:** Tier 2, review usability and accessibility reliability
 - **Effort:** Medium because candidate rows, operation cancellation, status recovery, disabled-state guidance, keyboard focus, and empty results cross the main-window rendering and worker lifecycle
 - **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`
