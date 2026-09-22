@@ -14,6 +14,7 @@ datas = [
 ]
 datas += copy_metadata("img-ai-filter")
 datas += collect_data_files("keyring")
+datas += collect_data_files("certifi")
 
 a = Analysis(
     [str(entry_point)],

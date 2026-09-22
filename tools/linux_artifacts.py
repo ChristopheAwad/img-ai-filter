@@ -18,6 +18,7 @@ class ArtifactValidationError(ValueError):
 _REQUIRED_FILES = (
     Path("image-filter"),
     Path("_internal/img_ai_filter/resources/io.github.img_ai_filter.ImageFilter.svg"),
+    Path("_internal/certifi/cacert.pem"),
     Path("README.txt"),
     Path("THIRD_PARTY_NOTICES.txt"),
 )

@@ -1,5 +1,6 @@
 """Application launch entry point."""
 
+import ssl
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
@@ -7,6 +8,7 @@ from img_ai_filter.platform_integration import configure_native_file_dialogs
 
 configure_native_file_dialogs()
 
+import certifi
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -23,6 +25,8 @@ def _application_version() -> str:
 
 def main() -> int:
     smoke_test = sys.argv[1:] == ["--smoke-test"]
+    if smoke_test:
+        ssl.create_default_context(cafile=certifi.where())
     app = QApplication(sys.argv)
     app.setApplicationName("Image Filter")
     app.setApplicationVersion(_application_version())
