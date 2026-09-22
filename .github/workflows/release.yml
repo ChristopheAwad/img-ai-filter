@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install application, tests, and pinned packaging tools
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]' -r packaging/linux/requirements.txt -c packaging/linux/runtime-constraints.txt
+      - name: Run network-blocked test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+      - name: Download and verify AppImage tools
+        run: |
+          set -euo pipefail
+          curl --fail --location --output appimagetool 'https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+          printf '%s  %s\n' 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0' appimagetool | sha256sum --check
+          curl --fail --location --output appimage-runtime 'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
+          printf '%s  %s\n' '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d' appimage-runtime | sha256sum --check
+          chmod +x appimagetool
+      - name: Build artifacts
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: python tools/build_linux.py --appimagetool ./appimagetool --runtime ./appimage-runtime
+      - name: Smoke test tar payload
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          temporary=$(mktemp -d)
+          trap 'rm -rf "$temporary"' EXIT
+          tar -xzf packaging-build/ImageFilter-*-linux-x86_64.tar.gz -C "$temporary"
+          XDG_CONFIG_HOME="$temporary/config" XDG_CACHE_HOME="$temporary/cache" XDG_DATA_HOME="$temporary/data" "$temporary"/ImageFilter-*-linux-x86_64/image-filter --smoke-test
+      - name: Verify artifact checksums
+        working-directory: packaging-build
+        run: sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImageFilter-linux-x86_64
+          path: |
+            packaging-build/ImageFilter-*-x86_64.AppImage
+            packaging-build/ImageFilter-*-linux-x86_64.tar.gz
+            packaging-build/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install release validator
+        run: python -m pip install -e . -c packaging/linux/runtime-constraints.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: ImageFilter-linux-x86_64
+          path: release-assets
+      - name: Validate release tag
+        id: release
+        run: |
+          set -euo pipefail
+          python -m img_ai_filter.release "$GITHUB_REF_NAME" pyproject.toml >> "$GITHUB_OUTPUT"
+      - name: Verify downloaded checksums
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          arguments=(--draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes)
+          if [[ "$PRERELEASE" == "true" ]]; then arguments+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${arguments[@]}"
+      - name: Upload exact release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" \
+            "release-assets/ImageFilter-${VERSION}-x86_64.AppImage" \
+            "release-assets/ImageFilter-${VERSION}-linux-x86_64.tar.gz" \
+            "release-assets/SHA256SUMS"
+      - name: Verify uploaded release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")
+          expected=$(printf '%s\n' "ImageFilter-${VERSION}-x86_64.AppImage" "ImageFilter-${VERSION}-linux-x86_64.tar.gz" SHA256SUMS | sort)
+          actual=$(jq -er '[.assets[] | select(.digest | test("^sha256:[0-9a-fA-F]{64}$")) | .name] | sort | .[]' <<< "$release_json")
+          [[ "$actual" == "$expected" ]]
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

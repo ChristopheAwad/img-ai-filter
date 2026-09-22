@@ -30,6 +30,7 @@ from img_ai_filter.scanner import is_windows_reparse_point
 ENDPOINT_URL_KEY = "endpoint_url"
 ENDPOINT_MODEL_KEY = "endpoint_model"
 AUTO_SELECT_CONFIDENCE_KEY = "auto_select_confidence_percent"
+INCLUDE_TEST_RELEASES_KEY = "include_test_releases"
 DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT = round(DEFAULT_HIGH_CONFIDENCE_THRESHOLD * 100)
 MIN_AUTO_SELECT_CONFIDENCE_PERCENT = 50
 MAX_AUTO_SELECT_CONFIDENCE_PERCENT = 100
@@ -65,6 +66,26 @@ def save_auto_select_confidence(store: Any, value: object) -> bool:
         return False
     try:
         store.write(AUTO_SELECT_CONFIDENCE_KEY, str(value))
+    except Exception:
+        return False
+    return True
+
+
+def load_include_test_releases(store: Any) -> bool:
+    """Load only the canonical persisted true value."""
+    try:
+        raw = store.read(INCLUDE_TEST_RELEASES_KEY)
+    except Exception:
+        return False
+    return isinstance(raw, str) and raw == "true"
+
+
+def save_include_test_releases(store: Any, value: object) -> bool:
+    """Persist a boolean using its canonical lowercase representation."""
+    if type(value) is not bool:
+        return False
+    try:
+        store.write(INCLUDE_TEST_RELEASES_KEY, "true" if value else "false")
     except Exception:
         return False
     return True

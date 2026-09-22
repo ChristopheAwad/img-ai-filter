@@ -1,904 +1,830 @@
-# F-010: Self-Contained Linux Test Distribution
+# F-011: AppImage Update Checks and Installation
 
 ## Status
 
-Plan written and approved by the user on 2026-09-21. The user selected Fedora
-x86-64 as the first test system and selected AppImage plus a compressed
-portable-directory fallback. Implementation is in progress.
+Plan written on 2026-09-21 and approved by the user on 2026-09-22. Write and
+observe the required failing tests before each production change.
 
-Approved baseline before feature tests:
+Test-first implementation and automated verification completed on 2026-09-22.
+The user completed and approved the desktop GUI verification on 2026-09-22.
+
+F-010 merged in PR #10 on 2026-09-22. Its packaging code is now the starting
+point for F-011. Recheck artifact names and release behavior against executable
+code and tests rather than copying stale assumptions from this plan.
+
+Approved baseline after synchronizing merged F-010:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-882 passed, 4 skipped, 1 warning in 60.48s
+929 passed, 4 skipped, 1 warning in 39.33s
 ```
 
-Baseline environment: Python 3.14.7, x86-64, glibc 2.43, PySide6 6.11.2, and
-Pillow 12.3.0. This development environment is too new to define the Linux
-compatibility floor. The test artifacts were built with Python 3.11 on Debian
-Bookworm (glibc 2.36), with PySide6 6.11.2, Pillow 12.3.0, keyring 25.7.0,
-PyInstaller 6.10.0, appimagetool 1.9.1, and a checksum-pinned AppImage runtime.
+Implementation details frozen after reconciliation with F-010:
 
-The required failing packaging/resource tests were written and observed failing
-before their production changes. Focused verification after implementation:
+- Use PEP 440 package and tag versions such as `0.2.0b1` and `v0.2.0b1`.
+- Declare `packaging` as a direct runtime dependency for version comparison.
+- Require GitHub's SHA-256 release-asset `digest` field for the selected
+  AppImage. Keep `SHA256SUMS` as a downloadable release artifact for people and
+  packaging verification, but do not make a second updater request for it.
+- Keep the manual read-only package workflow and add a separate tag-triggered
+  release workflow that creates a draft, uploads exact assets, verifies them,
+  and then publishes.
+
+Observed red phases before production changes:
+
+- Settings/release tests failed collection because the setting and release
+  module did not exist.
+- Transport tests failed collection because the update transport did not exist.
+- Installer tests failed collection because the AppImage installer did not
+  exist.
+- Initial GUI tests reported six missing updater behaviors.
+- Cancellation and installation-close lifecycle tests failed before their
+  control-state fixes.
+- Release workflow tests failed collection before release validation existed.
+- The `0.2.0` package-version test observed the prior `0.1.0` value.
+
+Focused verification after implementation:
 
 ```text
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest \
-  tests/test_linux_artifacts.py tests/test_linux_packaging.py \
-  tests/test_platform_integration.py tests/test_image_payload.py \
-  tests/test_settings.py tests/test_window.py tests/test_window_server.py \
-  tests/test_scan_workflow.py tests/test_quarantine.py -q
-408 passed, 2 skipped in 5.40s
+settings + release: 151 passed
+release + transport: 73 passed
+settings + release + transport + installer: 198 passed
+window update + existing window tests: 118 passed
+release workflow + Linux packaging tests: 55 passed
 ```
 
 Complete offline verification after implementation:
 
 ```text
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-924 passed, 4 skipped, 1 existing Pillow warning in 32.66s
+1063 passed, 4 skipped, 1 warning in 32.42s
 
 git diff --check
 clean
+
+.venv/bin/python -m img_ai_filter.release v0.2.0 pyproject.toml
+version=0.2.0
+prerelease=false
+
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m img_ai_filter --smoke-test
+passed
 ```
 
-Final generated artifacts:
+Local AppImage construction could not run because the repository's pinned
+PyInstaller 6.10.0 does not support the available Python 3.14 interpreter, and
+Python 3.11 through 3.13 are not installed locally. The release and packaging
+workflows use Python 3.11 and retain the complete build, smoke-test, and checksum
+steps. CI artifact construction remains to be confirmed after the change is
+pushed through the approved Git workflow.
+
+Current planning-time worktree state:
 
 ```text
-packaging-build/ImageFilter-0.1.0-x86_64.AppImage       80 MB
-packaging-build/ImageFilter-0.1.0-linux-x86_64.tar.gz  86 MB
-packaging-build/SHA256SUMS
+git status --short --branch
+## main...origin/main
+?? packaging-build/
 ```
 
-Both checksum entries pass. The frozen one-directory payload, extracted tarball,
-and AppImage extraction mode each pass the bounded offscreen smoke test with
-isolated XDG settings directories. Host `ldd` inspection of the XCB platform
-plugin found no unresolved libraries. PyInstaller warned about graphical,
-portal, D-Bus, XCB, and Wayland libraries absent from the minimal Debian build
-container; these are normal desktop host libraries and require the planned
-Fedora desktop acceptance test. Implementation is waiting for that test and
-explicit user approval.
-
-The implemented desktop identifier is `io.github.img_ai_filter.ImageFilter`
-rather than the plan's preferred personal-account identifier. It is used only
-for Linux desktop metadata and icon resources; the existing Qt organization and
-application names remain unchanged, so packaged builds retain the same
-`QSettings` identity as source builds.
+`packaging-build/` was already untracked and must not be deleted, modified, or
+committed as part of planning.
 
 ## Purpose
 
-Make Image Filter practical to test on a separate Fedora x86-64 desktop without
-installing Python, PySide6, Pillow, keyring, pip, or the source project. Produce
-two artifacts from the same frozen application payload:
+Let an AppImage user check for a newer GitHub release and install it without
+opening GitHub or manually replacing the AppImage. The user starts every check.
+The app does not make an update request at startup or on a timer.
 
-1. `ImageFilter-<version>-x86_64.AppImage` for one-file launch.
-2. `ImageFilter-<version>-linux-x86_64.tar.gz` as a portable no-FUSE fallback.
-
-KoboldCpp, its vision-capable GGUF model, and its matching `mmproj` remain
-external user-managed dependencies. The app must continue to connect only to a
-loopback or private-LAN KoboldCpp endpoint.
-
-## Scope Definition
-
-For this feature, "self-contained" means the artifacts include:
-
-- a compatible CPython interpreter;
-- all application modules;
-- PySide6 and the Qt libraries and plugins required by the app;
-- Pillow and the native image libraries required by supported formats;
-- keyring and all required Python package metadata, even though credentials are
-  dormant in the current GUI;
-- Python standard-library modules used by the app, including HTTP and TLS
-  support;
-- application icons, desktop metadata, license notices, and launch files.
-
-The artifacts may rely on facilities supplied by a normal Linux desktop:
-
-- the Linux kernel and x86-64 CPU support;
-- a compatible glibc baseline;
-- graphics drivers;
-- X11/XWayland or Wayland desktop services supported by bundled Qt;
-- a user D-Bus session and desktop portal when native portal dialogs are used;
-- a functioning certificate trust store for HTTPS;
-- FUSE for direct AppImage mounting, with the tarball supplied when FUSE is not
-  available.
-
-Do not advertise the artifacts as having zero operating-system requirements.
-
-## Goals
-
-1. Launch Image Filter on Fedora x86-64 without system Python or pip.
-2. Launch without a source checkout and without depending on the build working
-   directory.
-3. Preserve every existing scan, privacy, network, and quarantine contract.
-4. Bundle all reachable Python runtime dependencies declared by the project.
-5. Generate the AppImage and tarball from one byte-identical application
-   payload before outer-container metadata differs.
-6. Provide deterministic names, version metadata, SHA-256 checksums, and
-   third-party notices.
-7. Build in a controlled environment old enough to avoid tying the artifact to
-   Fedora's newer glibc unnecessarily.
-8. Make build failures clear when required Qt plugins, Pillow codecs, tools, or
-   metadata are missing.
-9. Add automated artifact tests that never contact a real network service.
-10. Provide a safe manual Fedora checklist using disposable copied images and a
-    user-managed KoboldCpp server.
+The first updater-enabled AppImage cannot be delivered by the updater because
+older AppImages contain no updater. The user must manually install that one
+bootstrap release. Later compatible AppImages can update themselves.
 
 ## Frozen Product Decisions
 
-- Track this feature as F-010. F-008 remains reserved for the separately
-  planned reliability audit, and F-009 is already shipped.
-- The first supported package target is Linux x86-64.
-- Fedora x86-64 is the first manual acceptance system.
-- Build the Linux artifact on a documented older compatible Linux base rather
-  than on the target Fedora host. Prefer Ubuntu 22.04 x86-64 unless initial
-  dependency probing proves that its toolchain cannot build the selected
-  PySide6/PyInstaller combination.
-- Use PyInstaller to create a one-directory payload.
-- Do not use PyInstaller one-file mode. AppImage supplies the single-file outer
-  artifact without adding a second extraction layer.
-- Create both the AppImage and tarball from the validated one-directory payload.
-- Use AppImage as the main tester-facing artifact.
-- Use a gzip-compressed tar archive for the initial fallback because Fedora can
-  extract it without another application package.
-- Do not create a `.deb`, RPM, Flatpak, Snap, system package repository, or
-  system-wide installer in F-010.
-- Do not require root access to launch either artifact.
-- Do not write application settings beside or inside the executable. Continue
-  using the existing stable Qt `QSettings` identity.
-- Do not bundle KoboldCpp, a GGUF model, an `mmproj`, sample user images,
-  evaluation datasets, or endpoint credentials.
-- Do not publish GitHub releases automatically in this feature. CI may retain
-  downloadable workflow artifacts for approved test builds.
-- Do not add automatic updates, crash reporting, telemetry, or analytics.
-- Do not add Linux code signing as a release blocker for this test artifact.
-  Generate SHA-256 checksums. Signing can be decided for a public release.
-- Keep current application version `0.1.0` unless a separate approved release
-  decision changes it. Artifact names derive from project metadata instead of a
-  duplicate hard-coded version.
-- Use one stable Linux desktop application identifier consistently in Qt,
-  desktop metadata, icon names, and AppStream metadata. Prefer
-  `io.github.ChristopheAwad.img_ai_filter` after verifying that it does not alter
-  the existing `QSettings` storage identity.
-- Add a project-owned application icon suitable for redistribution. Do not use
-  copyrighted third-party artwork or model/provider branding.
-- The application must remain usable if `xdgdesktopportal` platform-theme
-  integration is unavailable. A missing optional portal component must not
-  prevent startup or folder selection.
-- Keep all automated network access blocked. Frozen smoke tests use no live
-  KoboldCpp server or use only an injected/in-process fake where the existing
-  architecture permits it without opening sockets.
+1. Add an explicit **Check for Updates** action to the desktop application.
+2. Contact GitHub only after the user selects that action.
+3. Do not check on startup, periodically, after a scan, or after a connection
+   test.
+4. Use stable releases by default.
+5. Add a saved **Include test releases** option. When enabled, consider stable
+   releases and GitHub pre-releases. Never consider drafts.
+6. Support Linux x86-64 AppImage installation first.
+7. Source, editable, portable-tar, and other package builds may check for an
+   update but must never replace themselves.
+8. Download the complete AppImage. Do not add AppImage `.zsync` delta updates in
+   F-011.
+9. Stream downloads to disk. Do not hold the full AppImage in memory.
+10. Show version, stable/test channel, release notes, and download size before
+    asking the user to download.
+11. Require a second explicit confirmation before installation.
+12. Verify the complete AppImage with an expected SHA-256 digest before making
+    it executable or replacing any file.
+13. Obtain the running outer AppImage path from the `APPIMAGE` environment
+    variable. Do not infer it only from the working directory or
+    `sys.executable`.
+14. Replace the AppImage only when its file and parent directory pass all safety
+    checks.
+15. Keep one recovery backup of the prior AppImage.
+16. Ask whether to restart after a successful replacement. Do not restart
+    without confirmation.
+17. Keep update networking separate from the private-LAN KoboldCpp transport.
+    Update support must not weaken endpoint validation, no-redirect behavior,
+    response limits, or privacy rules for image analysis.
+18. Use injected transports and filesystem/process boundaries so all automated
+    tests remain offline and deterministic.
+19. Do not send image paths, endpoint settings, scan history, machine identity,
+    credentials, or other application data to GitHub.
+20. Do not add telemetry or an installation identifier.
 
-## Existing Contracts To Preserve
+## Scope
 
-- The server is user-managed and outside this package.
-- Only loopback and private-LAN destinations are accepted.
-- Redirects and public Internet destinations are rejected.
-- Every scan requires an already tested endpoint and explicit transfer consent.
-- Plain HTTP remains visibly identified as unencrypted.
-- Images are processed one at a time with no retry.
-- Source selection alone does not scan, open images, or contact a server.
-- Scanning never edits, moves, renames, or deletes source files.
-- Candidate previews remain bounded and in memory.
-- Candidate selection continues to use the saved F-009 confidence threshold.
-- Quarantine remains an explicit exact-path confirmed move, not deletion.
-- Existing destinations are never overwritten.
-- Sources are revalidated before movement.
-- Cross-filesystem copies are verified before source removal.
-- Activity history retains its bounded storage and privacy rules.
-- Automated tests never contact any network service.
-- Windows-only tests remain skipped outside Windows.
+### Included
 
-## Artifact Contract
+- Manual update discovery through GitHub release metadata.
+- Stable and opt-in test release channels.
+- Strict version and release validation.
+- Exact Linux x86-64 AppImage asset selection.
+- Bounded metadata requests.
+- Streamed AppImage downloads with progress and cancellation.
+- SHA-256 verification.
+- AppImage environment and path safety checks.
+- One retained backup and recoverable replacement.
+- Explicit restart prompt.
+- A dedicated update worker or controller that keeps Qt responsive.
+- A draft-first GitHub release workflow.
+- Package version, release tag, metadata, and filename consistency checks.
+- Offline unit, integration, Qt, packaging, and workflow tests.
+- User documentation and a desktop verification checklist.
 
-### Common Frozen Payload
+### Excluded
 
-The PyInstaller output directory must:
+- Automatic startup or scheduled checks.
+- Silent downloads, installation, or restart.
+- Windows or macOS update installation.
+- Portable-tar directory replacement.
+- Updating source or editable installations.
+- Linux package-manager integration.
+- AppImage `.zsync` differential downloads.
+- Rollback controls inside the GUI.
+- Deleting a retained backup automatically after startup.
+- Downgrades or same-version reinstalls.
+- More than one retained backup.
+- Release signing with a project-owned offline key.
+- Telemetry, analytics, or unique update identifiers.
+- Changes to the KoboldCpp server or image-transfer workflow.
 
-- contain one documented executable entry point;
-- contain the CPython runtime used by the frozen executable;
-- contain application modules and required Python standard-library modules;
-- contain PySide6 QtCore, QtGui, and QtWidgets support;
-- contain a working Qt platform plugin for the supported display path;
-- contain required Qt image format and style/plugin dependencies;
-- contain Pillow plugins and native libraries for PNG, JPEG, WebP, BMP, and
-  TIFF;
-- contain keyring package code and metadata needed for its guarded dynamic
-  import, without activating credentials in the GUI;
-- contain SSL/OpenSSL components needed by the standard-library HTTPS client;
-- contain application desktop/icon metadata and third-party notices;
-- contain no absolute source-tree dependency at runtime;
-- contain no `.venv`, test suite, coverage data, Git metadata, private datasets,
-  source images, endpoint settings, credentials, caches, or build-host home
-  paths unless a binary toolchain unavoidably embeds a nonfunctional debug path;
-- be read-only at runtime without preventing normal startup, settings, history,
-  scanning, or quarantine output to user-selected writable paths.
+## Security And Trust Boundary
 
-Treat PyInstaller warnings as review inputs. Maintain a small explicit allowlist
-only for imports that are proven optional and unreachable on the packaged Linux
-path. Do not suppress all missing-module warnings.
+The updater installs executable code from the public Internet. Treat all
+release metadata, redirect responses, names, sizes, notes, digests, and bytes as
+untrusted input.
 
-### Tarball
+F-011 verifies transport security and release integrity through HTTPS, strict
+GitHub host rules, exact release/asset matching, and SHA-256. This detects a
+corrupt or substituted download when it does not match the trusted release
+metadata. It does not protect against compromise of the GitHub repository or
+release-publishing credentials. Document this limitation. Project-owned signed
+release manifests remain future hardening, not an implied F-011 guarantee.
 
-The tarball must:
+Never pass GitHub URLs through the private-LAN endpoint validator. Never permit
+the vision client to contact public hosts. Implement a separate, narrow update
+transport with its own policy.
 
-- contain one top-level directory named with application version and target;
-- preserve executable permissions;
-- include a short packaged-use README and third-party notices;
-- extract and launch from a user-writable location without installation;
-- launch when the extraction path includes spaces;
-- not require FUSE;
-- not require root privileges;
-- produce the same application behavior as the common frozen payload.
+## Release Contract
 
-### AppImage
+1. `pyproject.toml` remains the application version authority.
+2. Stable release tags use `vMAJOR.MINOR.PATCH`, for example `v0.2.0`.
+3. Test release tags use one documented pre-release form accepted by the chosen
+   version parser, for example `v0.2.0b1` or `v0.2.0-beta.1`. Choose one form
+   during implementation and use it consistently in package metadata, tags,
+   tests, and documentation.
+4. A release tag must identify the same normalized version as the packaged
+   application.
+5. Drafts are never update candidates.
+6. A stable-channel check ignores all pre-releases.
+7. A test-channel check considers stable and pre-release versions and selects
+   the highest valid version newer than the installed version.
+8. An equal or older version is not an update.
+9. Local versions, malformed versions, and unsupported version forms are not
+   update candidates.
+10. The required asset name is derived from the validated release version and
+    the packaging naming contract. Do not select an asset by substring alone.
+11. The first implementation supports exactly Linux x86-64 AppImages.
+12. A candidate release must contain exactly one matching AppImage asset.
+13. The matching asset must have a positive bounded size and a valid SHA-256
+    digest supplied by the approved release metadata contract.
+14. Duplicate matching assets, absent assets, absent digests, malformed
+    digests, and unsupported architectures make that release unusable.
+15. Release notes are display-only untrusted plain text. Do not render remote
+    HTML or execute links embedded in notes.
+16. The workflow must build and test before release publication.
+17. Create the GitHub release as a draft, upload every required asset, verify
+    names and digests, and publish only after verification succeeds.
+18. Pull-request workflows must never publish a release.
+19. Grant `contents: write` only to the release publication job that needs it.
+20. Keep the existing read-only packaging workflow or replace it only when the
+    new workflow retains its tests, checksum verification, and artifact upload.
 
-The AppImage must:
+## Detailed Test-First Plan
 
-- target x86-64 and use the common frozen payload;
-- contain a valid `AppRun` entry point;
-- contain a valid desktop file and icon link/layout expected by AppImage tools;
-- expose the product name, version, icon, categories, and executable identity;
-- launch after the executable bit is set;
-- not write inside the mounted AppImage;
-- work from a path containing spaces;
-- fail with documented guidance when direct mounting is unavailable;
-- have the tarball fallback documented rather than requiring the tester to
-  install FUSE.
+### Phase 0: Rebase Knowledge And Record Baseline
 
-### Checksums And Naming
-
-Use these forms, populated from project version metadata:
-
-```text
-ImageFilter-0.1.0-x86_64.AppImage
-ImageFilter-0.1.0-linux-x86_64.tar.gz
-SHA256SUMS
-```
-
-`SHA256SUMS` must list both artifacts with standard lowercase SHA-256 digests.
-Generating the file twice from unchanged artifacts must produce identical
-content. Full byte-for-byte reproducibility of the compressed artifacts is a
-goal only if it can be achieved with bounded timestamps and ordering without
-substantial custom tooling; record any remaining nondeterminism honestly.
-
-## Build And Dependency Contract
-
-- Add packaging dependencies separately from application runtime dependencies.
-  A source installation for normal development must not install PyInstaller or
-  AppImage construction tools unless the packaging extra or documented build
-  environment is selected.
-- Pin PyInstaller and Python packaging tool versions used by CI.
-- Resolve and record exact versions of runtime packages used in release
-  artifacts. Do not silently resolve a different PySide6 or Pillow version on
-  every build.
-- Keep `pyproject.toml` as the application package authority. Do not turn
-  `.opencode/package.json` into an application manifest.
-- Prefer a checked-in PyInstaller `.spec` file over a long undocumented command.
-- Keep hidden imports and collected metadata explicit when PyInstaller cannot
-  infer them, especially for guarded keyring loading and Pillow plugins.
-- Include only Qt modules and plugins required by the current application.
-  Avoid collecting the complete Qt SDK without evidence that it is needed.
-- Ensure `configure_native_file_dialogs()` still runs before Qt imports in the
-  frozen process.
-- Add a small, documented build script only where it removes error-prone manual
-  sequencing. The script must validate its inputs, stop on failure, use paths
-  relative to the repository root, and not delete unrelated directories.
-- Put generated output under an ignored, dedicated packaging build directory.
-- Never read developer credentials or normal user settings during artifact
-  construction.
-- Build commands must work non-interactively in CI.
-- The CI workflow must use least-privilege read-only repository permissions and
-  must not publish a release or push changes.
-
-## Application Identity And Resources
-
-Add only the runtime application identity needed for desktop packaging:
-
-- set a stable application display name;
-- set an application version from package metadata or one authoritative source;
-- set a packaged application icon through Qt;
-- preserve the existing organization/application names used by `QSettings` so
-  package installation does not unexpectedly lose or fork existing settings;
-- load icon/resource data through a frozen-safe method that also works during
-  source development and tests;
-- do not depend on the current working directory;
-- provide PNG sizes and/or SVG as required by Qt, AppImage, desktop files, and
-  AppStream metadata;
-- include accessible text metadata and a valid desktop category;
-- avoid file associations, MIME handlers, autostart, privileged capabilities,
-  or shell integration not required to launch the app.
-
-## Detailed Test Coverage First
-
-### 1. Baseline And Worktree Inspection
-
-Before test or implementation changes:
-
-1. Run `git status --short --branch`.
-2. Preserve all unrelated user or agent changes.
-3. Run the complete suite exactly:
+1. Wait until F-010/PR #10 is accepted and merged unless the user explicitly
+   directs work on its branch.
+2. Read merged `AGENTS.md`, `roadmap.md`, `feature.md`, `project-brief.md`,
+   `README.md`, `pyproject.toml`, packaging scripts, packaging tests, and GitHub
+   workflows.
+3. Inspect Git status and preserve unrelated or untracked files.
+4. Confirm the authoritative package version and actual AppImage filename.
+5. Confirm how the packaged application obtains `QApplication.applicationVersion`.
+6. Confirm whether the built AppImage sets `APPIMAGE` during normal launch and
+   what happens in extraction mode.
+7. Run the complete network-blocked suite:
 
    ```text
    QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
    ```
 
-4. Record passes, skips, warnings, and duration in this Status section.
-5. Confirm `tests/conftest.py` still blocks sockets, DNS, and standard-library
-   HTTP.
-6. Record current Python, PySide6, Pillow, keyring, glibc, and architecture
-   versions used by the development environment. Do not treat the current
-   Python 3.14 venv as the release runtime automatically; select and document a
-   supported build Python after compatibility tests.
-7. If baseline tests fail, diagnose before packaging work. Do not modify
-   unrelated behavior to make packaging appear successful.
+8. Record the exact pass, skip, warning, and duration result in this file before
+   changing tests.
+9. Inspect the current AppImage and tar artifact without changing source files.
+10. Confirm that automated tests still block sockets, DNS, and stdlib HTTP.
 
-### 2. Packaging Metadata Tests
+### Phase 1: Settings Tests
 
-Write failing tests for small parseable metadata and build helper behavior
-before adding production packaging files. Prove:
+Add tests before production changes for the saved test-release choice.
 
-- project name and version are obtained from `pyproject.toml`;
-- an empty, missing, malformed, non-string, or unexpected version causes a safe
-  build failure instead of an incorrectly named artifact;
-- artifact names match the frozen naming contract exactly;
-- only Linux and x86-64 are accepted by this first packaging target;
-- unsupported architectures such as aarch64 fail with a clear message;
-- the desktop file uses the agreed stable application identifier;
-- the desktop `Exec` value points to the packaged launcher without shell
-  interpolation;
-- the desktop file does not request a terminal;
-- desktop categories and icon names are present;
-- AppStream XML, if added, parses and carries the matching ID, name, summary,
-  launchable, version, and license fields;
-- missing icon sizes, desktop metadata, notices, or launcher files fail artifact
-  validation;
-- no metadata embeds a KoboldCpp endpoint, username, home directory, or build
-  checkout path.
+1. Missing setting returns `False`.
+2. Canonical false value returns `False`.
+3. Canonical true value returns `True`.
+4. Empty text returns the safe `False` default.
+5. Whitespace-padded text returns the safe default unless canonicalization is
+   explicitly specified by the implementation contract.
+6. Mixed-case or malformed text returns `False`.
+7. Non-string store values return `False`.
+8. Store read failure returns `False`.
+9. Saving `False` writes the canonical false value.
+10. Saving `True` writes the canonical true value.
+11. Saving non-boolean values fails without writing.
+12. Store write failure is reported and does not update active GUI state.
+13. A successful round trip preserves both values.
+14. Existing endpoint, model, confidence, quarantine, and history settings stay
+    unchanged.
 
-Prefer tests of project-owned validators over brittle tests that duplicate an
-external tool's complete implementation.
+Implement only the setting key and small load/save functions needed to pass
+these tests. Do not add last-check times because checks are manual-only.
 
-### 3. Resource Loading And Application Identity Tests
+### Phase 2: Version And Release Parsing Tests
 
-Write failing unit or `pytest-qt` tests proving:
+Create a GUI-neutral release module and test it with Python data or fake JSON.
+No test may use a live HTTP request.
 
-- the app has the expected display name while source-run;
-- the app icon loads while source-run;
-- the icon resource can be resolved through a simulated frozen resource root;
-- a missing or corrupt icon fails safely with a generic icon and does not stop
-  the window from opening;
-- the application version matches `pyproject.toml` or the selected single
-  authoritative version source;
-- setting desktop identity does not change the organization and application
-  values used by existing `QSettings`;
-- icon/resource resolution never depends on `Path.cwd()`;
-- changing the current directory before launch does not prevent resource
-  loading;
-- initialization still configures Linux platform integration before importing
-  Qt;
-- no resource test writes into the source package or frozen resource root.
+#### Response Boundaries
 
-### 4. PyInstaller Specification Tests
+1. Empty response body is rejected.
+2. Whitespace-only response is rejected.
+3. Invalid UTF-8 is rejected safely.
+4. Invalid JSON is rejected safely.
+5. Truncated JSON is rejected safely.
+6. A top-level object is rejected when a list is required.
+7. A top-level scalar or null is rejected.
+8. An empty release list returns a no-update result.
+9. A metadata response at the exact configured byte limit is accepted when
+   otherwise valid.
+10. A metadata response one byte over the limit is rejected before unbounded
+    allocation.
+11. Excessive release counts are bounded or rejected deterministically.
+12. Unknown fields are ignored without weakening required-field validation.
 
-Add tests or a deterministic validation command that initially fails until the
-specification exists and proves:
+#### Required Release Fields
 
-- the spec builds from the intended application entry point;
-- the build is one-directory, not PyInstaller one-file;
-- GUI/windowed mode does not create an unnecessary console window where the
-  option applies;
-- the application package is collected;
-- required PySide6 modules and Qt plugins are collected;
-- required Pillow plugins are collected;
-- keyring package code and metadata are collected despite dynamic import;
-- standard-library SSL support is collected;
-- application icons and notices are included;
-- tests, evaluation datasets, `.git`, `.venv`, caches, and packaging output are
-  excluded;
-- missing required inputs fail the build;
-- stale output is replaced only inside the dedicated generated build directory;
-- the build does not mutate source files or user-selected data.
+1. Missing tag, draft flag, pre-release flag, notes, publication identity, or
+   assets are handled according to an explicit schema.
+2. Wrong field types are rejected; booleans must not be accepted as integers.
+3. Blank tag names are rejected.
+4. Draft releases are always ignored.
+5. Stable mode ignores pre-releases.
+6. Test mode includes valid pre-releases and stable releases.
+7. Malformed release entries do not crash the whole check.
+8. If all entries are malformed or unusable, return a clear metadata error or
+   no-usable-release result as fixed by tests; do not silently claim the app is
+   current when metadata could not be trusted.
+9. Remote release notes remain plain text.
+10. Very large notes are truncated to a safe display limit with an explicit
+    indication, without altering version selection.
 
-Do not assert exact internal PyInstaller-generated filenames unless they are a
-required public contract. Validate capabilities and required classes of files.
+#### Version Boundaries
 
-### 5. Frozen Launch Smoke Tests
+1. Installed version equal to latest version returns up to date.
+2. Installed version newer than every release returns up to date.
+3. One patch version newer is selected.
+4. One minor version newer is selected.
+5. One major version newer is selected.
+6. Numeric ordering handles `0.10.0` as newer than `0.9.0`.
+7. A stable release is newer than its corresponding pre-release.
+8. Test mode selects the highest eligible release independent of API order.
+9. Stable mode selects the highest stable release independent of API order.
+10. Invalid installed version produces a local configuration error and never
+    offers an update.
+11. Invalid remote versions are skipped and cannot become candidates.
+12. Leading/trailing whitespace is not accepted unless explicitly normalized by
+    the fixed tag parser.
+13. Downgrades are never offered.
+14. Same-version rebuilds are never offered.
+15. Local/development version syntax is rejected or handled by one explicit,
+    tested rule. Do not guess from string comparison.
 
-After observing the intended failures, build the one-directory payload and test
-it in a clean environment. Prove:
+#### Asset Selection
 
-- the executable starts with no system Python available on `PATH`;
-- the executable starts outside the repository;
-- the executable starts with an empty temporary `HOME`, `XDG_CONFIG_HOME`, and
-  `XDG_DATA_HOME`;
-- the executable starts when its path includes spaces;
-- the executable starts while its installation directory is read-only;
-- changing the working directory does not change startup behavior;
-- startup succeeds without a KoboldCpp server;
-- no startup network request occurs;
-- the main window can be created with `QT_QPA_PLATFORM=offscreen` for automated
-  smoke testing;
-- a bounded smoke-test mode or external process harness exits cleanly instead
-  of hanging CI;
-- startup errors return a nonzero status and useful diagnostics without a Python
-  traceback being shown as the normal GUI experience;
-- no source checkout is opened or imported at runtime.
+1. A release with exactly one expected Linux x86-64 AppImage is accepted.
+2. Missing AppImage is rejected as unusable.
+3. Duplicate exact-name AppImages are rejected as ambiguous.
+4. An ARM AppImage is rejected.
+5. A tarball is not selected as an AppImage.
+6. A filename that only contains the expected name is rejected.
+7. A filename with path separators is rejected.
+8. A zero-byte asset is rejected.
+9. A negative, boolean, non-integer, or absent size is rejected.
+10. An asset at the exact maximum size is accepted.
+11. An asset one byte over the maximum is rejected.
+12. A missing, malformed, wrong-algorithm, uppercase/lowercase, or wrong-length
+    digest follows one strict documented rule.
+13. Only the exact selected asset URL is returned to the downloader.
+14. Asset API and browser URLs with unsupported schemes are rejected.
+15. Duplicate releases with the same normalized version cannot cause unstable
+    selection; reject ambiguity or apply one tested deterministic rule.
 
-Do not add a production backdoor that bypasses application safety behavior just
-for tests. A process-level smoke option may create and close the normal window,
-or tests may use an external timeout and controlled Qt environment.
+Implement immutable release/result models, strict parsing, channel filtering,
+version comparison, and exact asset selection only after observing these tests
+fail.
 
-### 6. Frozen Image Codec Tests
+### Phase 3: Metadata Transport Tests
 
-Use generated temporary images, not repository user data. Prove through the
-frozen payload that:
+Create a transport dedicated to public GitHub update metadata. Do not modify the
+vision transport to permit public Internet access.
 
-- valid PNG opens and produces a bounded PNG request payload and thumbnail;
-- valid JPEG and `.jpeg` variants work;
-- valid WebP works, including native codec availability;
-- valid BMP works;
-- valid TIFF and `.tif` variants work;
-- corrupt data for every supported suffix fails safely;
-- a suffix/decoded-format mismatch remains rejected;
-- oversized dimensions and decompression-bomb limits retain existing behavior;
-- EXIF orientation, transparency conversion, digest, byte count, and source
-  identity behavior remain unchanged;
-- codec tests write only to their temporary directories;
-- source test files remain byte-for-byte unchanged.
+1. Only HTTPS metadata URLs are accepted.
+2. User information, fragments, malformed ports, and unexpected paths are
+   rejected.
+3. The initial metadata host must be the fixed approved GitHub API host.
+4. No authentication token is required for public release checks.
+5. The request sends a fixed product user agent and an appropriate GitHub API
+   media type.
+6. The request does not send endpoint settings, paths, machine IDs, or history.
+7. Connection timeout produces a safe user-facing error.
+8. Read timeout produces a safe error.
+9. DNS, TLS, and connection failures do not expose raw exceptions.
+10. HTTP 200 with valid bounded content succeeds.
+11. HTTP 204, redirects outside the explicit policy, rate limiting, client
+    errors, and server errors produce distinct safe results where useful.
+12. Metadata redirects are rejected unless there is a concrete documented need
+    and an exact allowlist test.
+13. Declared content length over the limit is rejected before reading the body.
+14. A missing content length still uses a hard streaming read limit.
+15. A lying content length cannot bypass the hard limit.
+16. Cancellation before request, during connect where supported, and during
+    body read stops work and returns a cancellation result.
+17. The transport performs no automatic retry.
+18. Every transport test injects fake connections or responses.
+19. The autouse no-network fixture remains active and passes.
 
-If running the existing Python test modules through the frozen GUI is not
-practical, add a narrow project-owned artifact probe that exercises the real
-frozen `image_payload` module. Do not copy or reimplement its decoding logic in
-the test probe.
+### Phase 4: Streaming Download Tests
 
-### 7. Qt Plugin And Desktop Tests
+Build the artifact downloader behind an injected transport/filesystem boundary.
 
-Prove automatically where possible and manually where display services are
-required:
+1. Require HTTPS for every download hop.
+2. Permit only the exact documented GitHub release-asset host flow.
+3. Reject redirect loops and more than the configured redirect limit.
+4. Reject HTTPS-to-HTTP downgrade.
+5. Reject redirects to arbitrary hosts, IP literals, user-info URLs, fragments,
+   and malformed locations.
+6. Do not forward authorization or sensitive headers across hosts.
+7. Resolve relative redirect locations safely if the policy allows them.
+8. A successful download writes fixed-size chunks instead of one full response.
+9. Progress is monotonic and never exceeds the expected size.
+10. Unknown content length does not disable the maximum-size limit.
+11. Declared content length that differs from release metadata is rejected.
+12. Zero-byte response is rejected.
+13. Early EOF is rejected.
+14. Extra bytes beyond expected size are rejected.
+15. A body exactly at the expected and maximum boundaries succeeds.
+16. A body one byte above either boundary fails and removes the temporary file.
+17. Connection failure before writing leaves no temporary file.
+18. Failure after partial writing removes the partial file.
+19. Cancellation before writing creates no file.
+20. Cancellation after partial writing closes and removes the partial file.
+21. Destination write failure returns a safe error and removes what can be
+    removed without touching unrelated files.
+22. Disk-full failure is reported safely.
+23. Temporary filenames cannot be controlled by remote asset names.
+24. Existing files are never overwritten by the download stage.
+25. SHA-256 is computed incrementally while streaming or in one bounded
+    file-reading verification pass.
+26. Matching digest succeeds.
+27. One-byte digest mismatch fails, removes the untrusted temporary artifact,
+    and never calls installation.
+28. Cancellation and errors do not leave an executable file.
+29. Downloaded bytes are never logged.
 
-- Qt can initialize in offscreen mode from the frozen payload;
-- the required Linux display platform plugin is present;
-- PNG thumbnails render through Qt;
-- the desktop file validates with the available standard validator;
-- AppStream metadata validates when that tool is available in the build image;
-- icon files decode and have required dimensions;
-- the app remains launchable when
-  `QT_QPA_PLATFORMTHEME=xdgdesktopportal` cannot load an optional portal theme;
-- an existing user-provided `QT_QPA_PLATFORMTHEME` remains respected;
-- folder selection is tested manually on Fedora Wayland and X11/XWayland where
-  available;
-- missing FUSE affects only direct AppImage mounting and does not affect the
-  tarball payload.
+### Phase 5: Installation Detection And Validation Tests
 
-Do not assume that the PySide6 wheel contains a desktop portal theme plugin.
-Verify actual contents and preserve a usable fallback.
+Create a small GUI-neutral installation module. It must classify the running
+installation before enabling installation.
 
-### 8. Settings And History Persistence Tests
+1. Missing `APPIMAGE` reports a non-AppImage installation.
+2. Empty or whitespace-only `APPIMAGE` is invalid.
+3. A relative path is rejected.
+4. A nonexistent path is rejected.
+5. A directory is rejected.
+6. A non-regular file is rejected.
+7. A symlink path follows one safe explicit rule. Prefer rejecting ambiguous
+   symlink launch paths rather than replacing a link unexpectedly.
+8. A path with a nonexistent parent is rejected.
+9. A non-writable AppImage is rejected.
+10. A non-writable parent directory is rejected.
+11. A read-only filesystem is rejected.
+12. AppImage extraction mode is detected and cannot self-install.
+13. Source, test, editable, and portable-tar launches cannot self-install.
+14. A valid absolute regular executable AppImage in a writable directory is
+    eligible.
+15. Validation uses the same exact path later passed to installation to avoid a
+    check/use mismatch where feasible.
+16. File identity is captured and revalidated immediately before replacement so
+    a changed AppImage is not backed up or replaced silently.
+17. The application does not modify the AppImage during detection.
 
-Use isolated temporary XDG paths. Prove with the frozen executable or a
-project-owned frozen probe:
+### Phase 6: Backup, Replacement, And Recovery Tests
 
-- first launch with no settings succeeds;
-- the base URL, discovered model, confidence threshold, quarantine directory,
-  and activity history use writable user configuration rather than the package
-  directory;
-- settings persist after process restart;
-- settings persist when the AppImage filename changes but the application
-  identity remains the same;
-- settings are shared intentionally between source-run and packaged builds only
-  according to the unchanged existing QSettings organization/application
-  identity;
-- malformed existing settings retain current safe fallback behavior;
-- an unwritable configuration directory produces safe user-visible behavior
-  rather than writing beside the executable;
-- clearing history still leaves quarantine move logs untouched;
-- no image bytes, candidate reasons, raw server responses, credentials, or
-  endpoint address are added to activity-history records;
-- no packaging test reads or changes the developer's real settings.
+Fix exact sibling names in tests. Derive them locally from the validated
+AppImage path, not from remote input. Use a unique temporary download name and
+one deterministic backup name that the GUI can explain.
 
-### 9. Network And Privacy Regression Tests
+1. Installation refuses an unverified download.
+2. Installation refuses a missing temporary file.
+3. Installation refuses a non-regular temporary file.
+4. Installation rechecks size and SHA-256 before replacement.
+5. Installation checks enough free space for the chosen backup strategy and
+   filesystem behavior.
+6. Exact required free space succeeds.
+7. One byte below required free space fails before changing the AppImage.
+8. The temporary file must be in the same parent directory/filesystem needed
+   for atomic final replacement.
+9. The new file receives safe executable permissions based on a fixed policy,
+   not remote mode bits.
+10. Data and directory synchronization calls are injected where needed so
+    ordering and failures can be tested.
+11. The current AppImage remains unchanged until the new artifact is fully
+    downloaded and verified.
+12. Existing backup handling follows one fixed rule. Prefer replacing only the
+    known prior backup after validation; never overwrite an arbitrary
+    directory, symlink, or unrelated file.
+13. Backup creation failure leaves the current AppImage unchanged.
+14. Final replacement failure triggers recovery from the backup.
+15. Successful recovery reports installation failure, not success.
+16. Recovery failure reports exact safe manual recovery paths without deleting
+    either surviving file.
+17. A successful installation leaves the new verified bytes at the original
+    AppImage path.
+18. A successful installation leaves one prior AppImage backup.
+19. A successful installation removes its temporary file.
+20. No operation touches source images, quarantine files, settings outside the
+    update option, or scan history.
+21. A second installation run handles the existing known backup safely.
+22. Two attempted installs are serialized; the second is rejected as busy.
+23. AppImage identity change between check and replacement aborts safely.
+24. New artifact identity change between verification and replacement aborts.
+25. Restart is not attempted when installation fails.
 
-Retain the existing global network block and prove:
+Do not claim the pair of backup and final rename operations is one atomic
+transaction. The required guarantee is that the final placement uses an atomic
+same-filesystem replacement and every intermediate failure has a tested
+recovery path.
 
-- launch performs no DNS lookup, socket creation, HTTP request, or HTTPS request;
-- all existing endpoint validation tests pass unchanged;
-- public hosts, public IP addresses, unsafe hostname resolution, userinfo,
-  fragments, queries, and redirects remain rejected;
-- loopback and private-LAN URL normalization remains unchanged;
-- consent remains required before image preparation and transfer;
-- no tests contact GitHub, package indexes, AppImage services, KoboldCpp, or any
-  external host after dependencies are installed;
-- build logs and artifact metadata contain no saved endpoint, credentials,
-  image bytes, user paths, or model response;
-- the package adds no telemetry, crash upload, update request, or analytics;
-- HTTPS continues to use normal certificate validation and does not add an
-  insecure bypass.
+### Phase 7: Restart Tests
 
-Dependency download is a controlled build-environment setup operation, not an
-application runtime behavior. Separate it clearly from offline tests.
+Use an injected process launcher and shutdown boundary.
 
-### 10. Scan And Quarantine Regression Tests
+1. Successful installation offers **Restart Now** and **Later**.
+2. Choosing **Later** does not start a process or close the app.
+3. Choosing **Restart Now** launches the exact validated AppImage path without
+   shell parsing.
+4. Remote strings never become command arguments.
+5. Restart launch failure keeps the current process open and reports that the
+   installed AppImage can be started manually.
+6. Successful launch requests normal application shutdown.
+7. Active scan or quarantine work cannot be abandoned without the existing
+   safe close/cancellation behavior.
+8. Tests do not start a real external process.
 
-Run existing focused tests and add artifact-level probes only where needed to
-prove packaging did not alter behavior:
+### Phase 8: GUI And Worker Tests
 
-- source folder selection remains idle and read-only;
-- scan runs off the GUI thread;
-- one image is processed at a time;
-- cancellation and close behavior remain bounded;
-- failed and uncertain results remain counted and omitted correctly;
-- threshold boundaries and manual checkbox changes remain correct;
-- thumbnails remain in memory;
-- quarantine root overlap remains rejected;
-- exact source and destination paths are shown before movement;
-- declining confirmation changes no files;
-- changed sources and destination conflicts remain untouched;
-- verified cross-filesystem behavior remains unchanged;
-- move logs are written only in the selected quarantine directory;
-- read-only installation directories do not interfere with operations on
-  explicitly selected writable data.
+Use Qt tests with fake release, download, install, and process services.
 
-Automated tests continue to use fake transports and disposable files. Real-data
-network testing occurs only in the manual acceptance gate.
+#### Check Action
 
-### 11. Tarball Construction Tests
+1. The update action is visible and keyboard accessible while idle.
+2. Merely launching the app performs no update request.
+3. Opening settings performs no update request.
+4. Scanning, testing the server, viewing history, or selecting folders performs
+   no update request.
+5. Selecting **Check for Updates** starts exactly one background check.
+6. A duplicate click cannot start a second check.
+7. The GUI remains responsive while checking.
+8. The check action has a clear busy state.
+9. Closing during a check cancels the operation and does not deliver stale
+   signals to a destroyed window.
+10. An up-to-date result shows the installed version.
+11. A no-usable-release result is distinct from a transport or malformed-data
+    failure.
+12. Errors use short safe text and never show raw exception representations.
 
-Write failing artifact tests before adding the final tarball construction step.
-Prove:
+#### Channel Setting
 
-- the expected output name derives from project metadata;
-- exactly one expected top-level directory exists;
-- the executable bit survives archive and extraction;
-- extraction rejects or detects unexpected absolute paths and `..` traversal in
-  the produced archive inspection;
-- symlinks, if any are required for native libraries, remain internal and do
-  not point outside the extracted directory;
-- packaged README and third-party notices are present;
-- no generated file is owned conceptually by a privileged user requirement;
-- launch after extraction does not require root, Python, pip, or FUSE;
-- extraction and launch work under a directory containing spaces;
-- rebuilding does not append stale files from an earlier payload;
-- checksum generation includes the final archive.
+1. Stable-only is shown and used by default.
+2. Enabling **Include test releases** requires Save before active state changes.
+3. Cancel preserves the prior active and persisted value.
+4. Save failure leaves the prior active value in force and keeps the dialog
+   available for retry.
+5. A new manual check reads the current active channel.
+6. Changing the option does not alter an update result already displayed.
+7. The interface labels test releases clearly.
 
-### 12. AppImage Construction Tests
+#### Update Available Dialog
 
-Write failing artifact tests before adding the final AppImage construction step.
-Prove:
+1. Show installed version, available version, stable/test label, bounded plain
+   release notes, and human-readable size.
+2. No download starts before the user confirms.
+3. Cancel closes the offer without writing a file.
+4. Unsupported installation type explains that automatic installation is not
+   available; it must not imply that replacement occurred.
+5. Invalid or missing release notes do not break layout.
+6. Long notes remain bounded and scrollable.
 
-- the AppDir has a valid `AppRun`;
-- `AppRun` resolves its own location and does not depend on the launch working
-  directory;
-- the desktop file and icon are in the required AppDir locations;
-- AppImage architecture is x86-64;
-- the AppImage version/name matches project metadata;
-- required payload files match the tested one-directory payload;
-- executable permissions are correct;
-- launch succeeds with a clean XDG environment where CI supports AppImage;
-- extraction mode can inspect or run the payload when FUSE is unavailable;
-- read-only AppImage mounting does not cause writes inside the package;
-- no update metadata is advertised unless an update mechanism is separately
-  approved and implemented;
-- checksum generation includes the final AppImage.
+#### Download And Install
 
-If the CI host cannot mount AppImages, use AppImage extraction for automated
-payload verification and retain direct-launch testing for the Fedora manual
-gate. Do not weaken the manual acceptance requirement.
+1. Confirmation starts exactly one background download.
+2. Progress starts at zero and is monotonic.
+3. Cancel requests cancellation and waits for safe cleanup.
+4. Download failure re-enables a retry path.
+5. Digest failure clearly says verification failed and never enables install.
+6. Successful verification asks separately for installation confirmation.
+7. Rejecting installation leaves the current AppImage unchanged and removes or
+   safely handles the verified temporary artifact according to the fixed rule.
+8. Installation runs off the GUI thread where filesystem synchronization may
+   block.
+9. The GUI remains responsive during installation.
+10. Successful installation offers restart choices.
+11. Installation and recovery errors show useful safe paths when manual action
+    is required.
+12. Update operation state cannot be confused with scan, server-test, or
+    quarantine worker signals.
+13. Stale signals from an earlier check/download are ignored.
+14. Existing scan and quarantine control-state tests continue to pass.
+15. Closing during download or installation follows explicit safe behavior. Do
+    not terminate a thread while replacement is in its critical section.
 
-### 13. Native Library Inspection
+Prefer a dedicated update controller/worker over adding unrelated update cases
+to the shared scan/connection/quarantine operation thread. Keep Qt widgets thin;
+release selection, download policy, verification, and installation stay
+GUI-neutral.
 
-Inspect the executable, extension modules, Qt plugins, and native libraries.
-Record and review:
+### Phase 9: Packaging And Release Workflow Tests
 
-- unresolved `NEEDED` shared libraries;
-- accidental links to build-directory paths;
-- glibc and GLIBCXX symbol requirements relative to the selected baseline;
-- bundled versus host-provided Qt libraries;
-- Pillow JPEG, WebP, TIFF, zlib, and related native codec dependencies;
-- OpenSSL dependencies used by Python HTTPS;
-- XCB/Wayland platform plugin dependencies;
-- duplicate libraries with incompatible versions;
-- executable stack or unexpected writable/executable segment warnings where
-  available tooling reports them;
-- architecture of every executable/shared-object class sampled or validated.
+After F-010 merges, extend its packaging tests before workflow changes.
 
-Maintain an explicit host-library expectation list. A test must fail for a new
-unresolved library unless it is reviewed and added deliberately.
+1. Package version is read from the declared version authority.
+2. AppImage filename contains the same normalized version.
+3. AppStream metadata version and date agree with the release inputs or are
+   generated/validated by tooling.
+4. Stable tags normalize to the package version.
+5. Test tags normalize to the exact pre-release package version.
+6. A mismatched tag fails before building or publishing.
+7. Unsupported tag forms fail.
+8. The release asset set contains the AppImage, portable tarball if still part
+   of F-010, and checksum/integrity metadata required by the contract.
+9. Checksums name exact artifacts and reject duplicate names.
+10. The release workflow runs the complete network-blocked suite before build.
+11. The workflow builds artifacts before creating or publishing a release.
+12. The release starts as a draft.
+13. Assets upload before publication.
+14. Verification runs before publication.
+15. Pull requests cannot publish.
+16. Normal branch pushes cannot publish unless that exact trigger is explicitly
+    approved.
+17. Only the publication job receives `contents: write`.
+18. Actions and downloaded packaging tools remain pinned according to project
+    policy.
+19. Workflow artifact checks remain available for non-release packaging runs.
+20. No signing or repository credential is embedded in the application.
 
-### 14. Artifact Content And Secret Inspection
+Use a release trigger that cannot accidentally publish from ordinary feature
+work. If tag-driven publication is selected, document the exact operator steps
+and ensure the version/tag consistency check runs before publication. If manual
+workflow approval is selected, record and validate the requested tag/version.
 
-Before manual testing, inspect generated outputs and prove:
+### Phase 10: Documentation
 
-- no `.git` directory or Git credentials exist;
-- no `.venv`, pytest cache, coverage output, bytecode cache, or local build log
-  exists in the payload;
-- no files from `evaluation/` or private datasets are present unless an
-  explicitly required license notice is separately identified;
-- no test fixture images are present;
-- no source or quarantine folders are present;
-- no QSettings files, history values, move logs, keyring data, tokens, passwords,
-  endpoint URLs, or model names from the build host are present;
-- no private keys or signing material are present;
-- no unexpected large files or model weights are present;
-- package licenses and third-party notices cover bundled Python, PyInstaller,
-  PySide6/Qt, Pillow, keyring, and transitive packages;
-- artifact size is reported and an unexpected material increase fails or
-  requires review rather than passing silently.
+Update durable documentation only after behavior is implemented and tested.
 
-### 15. CI Workflow Tests And Review
+1. Add F-011 product decisions to `project-brief.md`.
+2. Keep updater details separate from private-LAN image transfer language.
+3. Update `README.md` with **Check for Updates**, stable/test behavior, download
+   size expectations, backup location, restart behavior, and failure recovery.
+4. State that checking contacts GitHub and reveals the user's IP address and
+   request timing to GitHub and its delivery infrastructure.
+5. State that no image, image path, endpoint, history, credential, or machine ID
+   is sent during an update check.
+6. State that checks occur only after explicit user action.
+7. State that the first updater-enabled release needs one manual installation.
+8. State that automatic installation supports AppImage only.
+9. Explain source and portable-tar behavior accurately.
+10. Explain how to identify and restore the one retained backup manually.
+11. Explain stable versus test releases and the additional risk of test builds.
+12. Document the HTTPS/SHA-256 trust model without claiming independent release
+    signature verification.
+13. Document the release operator procedure beside the workflow or in packaging
+    documentation.
+14. Do not describe F-011 as a cross-platform updater.
 
-Add a Linux packaging workflow only after local construction and tests pass.
-Prove by review and workflow execution:
+## Proposed Module Boundaries
 
-- the workflow has `contents: read` permissions;
-- it checks out the repository and uses a pinned major or commit for actions;
-- it uses the approved Python and controlled build environment;
-- it installs exact packaging/runtime dependency versions;
-- it runs the complete network-blocked test suite before packaging;
-- it builds the one-directory payload once;
-- it validates that payload before creating either outer artifact;
-- it builds both artifacts from the validated payload;
-- it runs metadata, content, native-library, checksum, and smoke checks;
-- it uploads only the two artifacts, checksum file, and necessary test reports;
-- pull-request builds do not publish GitHub releases;
-- failures stop artifact publication;
-- caches cannot inject generated payload files into final artifacts;
-- no secret is required for ordinary test-artifact builds.
+Names may change to match merged F-010 conventions, but responsibilities must
+remain separated.
 
-### 16. Documentation Review
+### `src/img_ai_filter/update_release.py`
 
-After implementation tests pass, update durable documentation:
+- Channel enum or equivalent stable/test value.
+- Immutable release and asset records.
+- Strict GitHub JSON parsing.
+- Version normalization and comparison.
+- Draft/pre-release filtering.
+- Exact asset selection.
+- Safe release notes and size presentation data.
+- No HTTP, filesystem mutation, Qt widgets, or process launch.
 
-- `README.md` provides a Linux test-build download/launch section;
-- README states clearly that Python installation is not required for artifacts;
-- README states clearly that KoboldCpp, model, and `mmproj` remain external;
-- README explains `chmod +x` for AppImage without telling users to use root;
-- README gives tarball extraction/launch as the FUSE fallback;
-- README explains that plain HTTP image transfers are unencrypted;
-- README describes supported first target as Fedora x86-64 testing, not all
-  Linux distributions;
-- README documents checksum verification;
-- README documents where settings/history and quarantine move logs are stored or
-  how to identify them safely after measuring actual packaged behavior;
-- README has concise troubleshooting for startup, portal/file-dialog, display,
-  FUSE, permissions, and KoboldCpp connectivity;
-- `project-brief.md` records the packaging boundary and continued external
-  server/model decision without claiming the broader Milestone 6 is complete;
-- `roadmap.md` keeps F-010 in progress through desktop approval and the chosen
-  Git workflow;
-- no document calls the artifact universally portable or dependency-free at the
-  operating-system level;
-- no document claims signing, automatic updates, or support not tested here.
+### `src/img_ai_filter/update_transport.py`
 
-### 17. Focused Verification
+- Bounded GitHub metadata requests.
+- Strict HTTPS and host/path policy.
+- Narrow redirect handling for release assets.
+- Streamed file download.
+- Timeouts, cancellation, progress, size enforcement, and digest calculation.
+- Injectable connection and filesystem boundaries.
+- No vision endpoint behavior.
 
-Run at minimum after implementation:
+### `src/img_ai_filter/update_install.py`
 
-```text
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest \
-  tests/test_platform_integration.py tests/test_image_payload.py \
-  tests/test_settings.py tests/test_window.py tests/test_window_server.py \
-  tests/test_scan_workflow.py tests/test_quarantine.py -q
-```
+- Installation-kind detection.
+- `APPIMAGE` path validation.
+- Current-file identity capture and revalidation.
+- Free-space and sibling-path validation.
+- Executable permission policy.
+- Backup, atomic final replacement, and recovery.
+- Structured outcomes with safe user-facing details.
+- No HTTP or Qt widgets.
 
-Also run the dedicated packaging metadata, artifact, and frozen smoke-test files
-added by this feature. Record pass, skip, warning, artifact-size, and duration
-results in Status.
+### Qt Integration
 
-### 18. Full Regression And Final Inspection
+- Dedicated update worker/controller lifecycle.
+- Update dialog or small sequence of dialogs.
+- Settings option for test releases.
+- Progress, cancellation, installation confirmation, and restart prompt.
+- Inject release, download, install, and process services in tests.
 
-After focused and artifact tests pass:
+Avoid new helpers that only wrap one line. Keep each phase minimal and reuse
+existing settings and worker conventions where their contracts fit.
 
-1. Run the full suite:
+## Error And User Message Contract
+
+Use concise messages that state what happened and what remains safe.
+
+Required categories:
+
+- App is up to date.
+- No compatible release is available.
+- GitHub could not be reached.
+- GitHub rate limited the check.
+- Release information was invalid.
+- No compatible Linux x86-64 AppImage was found.
+- Download was cancelled.
+- Download failed; current AppImage was not changed.
+- Download verification failed; current AppImage was not changed.
+- Automatic installation is unavailable for this installation type.
+- AppImage directory is not writable.
+- Not enough disk space.
+- Installation failed and the original AppImage was restored.
+- Recovery failed; show the surviving original/backup/new paths safely.
+- Update installed; restart now or later.
+- Restart failed; start the installed AppImage manually.
+
+Do not show raw response bodies, raw exceptions, authorization headers, query
+strings, or an attacker-controlled URL. Logging, if any, must follow the same
+rule.
+
+## Required Verification
+
+1. Run focused settings and release tests after Phases 1 and 2.
+2. Run focused transport/download tests after Phases 3 and 4.
+3. Run focused installer/restart tests after Phases 5 through 7.
+4. Run focused Qt tests after Phase 8.
+5. Run packaging/workflow tests after Phase 9.
+6. Run `git diff --check`.
+7. Run the complete suite with network blocking:
 
    ```text
    QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
    ```
 
-2. Run `git diff --check`.
-3. Run `git status --short --ignored` and inspect generated outputs.
-4. Confirm generated build directories and artifacts are ignored and no source
-   or user data is hidden in ignored output.
-5. Re-run the artifact validators against the exact files supplied for manual
-   testing.
-6. Verify SHA-256 checksums from a separate working directory.
-7. Extract the tarball into a clean temporary path and run its smoke test.
-8. Extract and inspect the AppImage; directly launch it where FUSE is available.
-9. Run native-library inspection and secret/content inspection.
-10. Review the complete diff for changes outside packaging, identity, resources,
-    tests, CI, and documentation.
-11. Confirm no automated test contacted a real network service.
-12. Record all commands and results in Status.
+8. Confirm no test bypasses the no-network fixture.
+9. Build the AppImage through the approved F-010 command.
+10. Inspect its version, filename, executable mode, and runtime environment.
+11. Test metadata and download behavior with fakes before any manual live check.
+12. Perform a manual update using disposable copies of two AppImage versions.
+13. Never use the only copy of an AppImage for destructive manual testing.
+14. Record focused and complete test results in this file.
 
-## Implementation Sequence
+## Required Desktop GUI Checklist
 
-1. Obtain explicit user approval of this complete plan.
-2. Inspect worktree state and preserve unrelated changes.
-3. Run and record the complete offline baseline.
-4. Verify the intended Linux build base, Python version, CPU architecture, and
-   available AppImage construction tool without changing application code.
-5. Add failing packaging metadata tests for valid, missing, malformed, boundary,
-   and unsupported-target cases.
-6. Add failing resource and application identity tests, including changed
-   working directory and simulated frozen root cases.
-7. Run those tests and confirm failure is caused by missing F-010 behavior.
-8. Add the minimal icon/resource identity implementation and metadata files.
-9. Run focused source-mode tests until they pass.
-10. Add failing PyInstaller specification validators and frozen smoke tests.
-11. Run them and confirm failure because the frozen build is absent or incomplete.
-12. Add pinned packaging inputs and the one-directory PyInstaller specification.
-13. Build the payload and resolve only evidence-backed missing imports, Qt
-    plugins, Pillow codecs, keyring metadata, SSL components, and native
-    libraries.
-14. Run frozen launch, clean-XDG, changed-working-directory, read-only-install,
-    codec, Qt, settings, privacy, and application regression tests.
-15. Add failing tarball structure, permissions, traversal, content, and launch
-    tests.
-16. Implement tarball construction from the already validated payload.
-17. Run tarball tests until they pass.
-18. Add failing AppDir/AppImage metadata, payload, permissions, extraction, and
-    launch tests.
-19. Implement AppImage construction from the same validated payload.
-20. Run AppImage tests until they pass.
-21. Add checksum generation and failing checksum-content tests, then implement
-    the smallest deterministic checksum step.
-22. Run native-library, host-dependency, secret, content, license, and size
-    inspections; fix only demonstrated packaging defects.
-23. Add Linux CI after local artifact construction is stable.
-24. Update README, project brief, roadmap, and packaged documentation.
-25. Run focused tests, the full offline suite, artifact rebuild, all artifact
-    validators, diff checks, and final inspections.
-26. Supply the exact AppImage, tarball, and checksum files to the user through
-    the agreed workspace or CI artifact location.
-27. Ask the user to complete the Fedora manual checklist below.
-28. Wait for exact `Approved` or failure evidence.
-29. Only after approval ask whether to create a PR, commit, or push.
+After implementation and all automated tests pass, ask the user to run the
+exact launch command appropriate to the merged packaging branch. At minimum,
+provide this source-launch fallback:
 
-Do not delegate production implementation until the main session has written
-and run the failing tests. The main session owns tests, approval gates,
-integration, Git operations, and the full-suite result. Any delegated agent must
-receive the exact artifact contract and may implement only an independent seam
-after its failing tests exist.
+```text
+python -m img_ai_filter
+```
 
-## Expected Files
+Ask the user to use disposable AppImage copies and complete this checklist:
 
-Planning and durable documentation:
+1. Start the app and confirm no update dialog or network activity appears by
+   itself.
+2. Open settings and confirm **Include test releases** is off by default.
+3. Select **Check for Updates** and confirm a clear checking state appears.
+4. Confirm an up-to-date build reports its current version clearly.
+5. Enable test releases, save, reopen settings, and confirm the option persists.
+6. Check again and confirm test releases are clearly labeled when available.
+7. On a disposable older AppImage, review version, notes, size, and channel
+   before accepting download.
+8. Confirm progress appears and the app remains responsive.
+9. Cancel one download and confirm the current AppImage still starts and no
+   executable partial download remains.
+10. Retry, complete the download, and confirm installation asks separately.
+11. Install and choose **Later**; confirm the app stays open.
+12. Close and start the same AppImage path; confirm the new version appears.
+13. Confirm one backup of the old AppImage exists.
+14. Repeat with a non-writable disposable directory and confirm installation is
+    refused without changing files.
+15. Launch from source or the portable tarball and confirm it does not claim it
+    can replace itself.
+16. Confirm normal folder selection, server testing, scanning, candidate review,
+    and quarantine still behave as before.
 
-- `feature.md`
-- `roadmap.md`
-- `project-brief.md`
-- `README.md`
+Ask the user to reply with exactly `Approved` when every step passes, or provide
+the error text, a screenshot, and the checklist step that failed.
 
-Likely application and metadata changes:
+Do not ask about commits, pushes, or pull requests until the user explicitly
+approves the desktop checklist.
 
-- `pyproject.toml`
-- `src/img_ai_filter/__main__.py`
-- a small package resource helper only if direct resource loading cannot remain
-  clear in `__main__.py`
-- project-owned icon/resource files under a new documented package or packaging
-  resource directory
-- Linux `.desktop` metadata
-- AppStream metadata
-- third-party notices or a generated-notice input manifest
+## Implementation Handoff Checklist
 
-Likely packaging files:
+The implementation agent must follow this order:
 
-- a PyInstaller `.spec` file
-- a pinned packaging requirements or constraints file
-- a small Linux packaging script or scripts
-- AppDir/AppImage launcher metadata
-- generated-output ignore rules
-- `.github/workflows/linux-package.yml`
-
-Likely tests:
-
-- a focused packaging metadata test file
-- a focused resource/application identity test file or additions to existing
-  platform/window tests
-- artifact validation tests
-- frozen smoke/probe support kept separate from normal application behavior
-- existing image, settings, endpoint, scan, GUI, and quarantine regression tests
-
-Exact filenames are implementation details to select after tests establish the
-smallest clear structure. Do not add a broad packaging framework, release
-server, updater, installer service, or general build system.
-
-## Manual Fedora Desktop Acceptance Checklist
-
-Use a separate Fedora x86-64 test system. Use disposable copies of images and a
-new quarantine directory. Keep the originals outside both directories. The
-automated suite does not test a live server.
-
-1. Download or transfer the AppImage, tarball, and `SHA256SUMS` into one folder.
-2. Run `sha256sum --check SHA256SUMS` and confirm both artifacts report `OK`.
-3. Confirm Python is not required by temporarily using a shell where `python`,
-   `python3`, and `pip` are not on `PATH`; do not uninstall system components.
-4. Mark the AppImage executable with
-   `chmod +x ImageFilter-0.1.0-x86_64.AppImage`.
-5. Launch the AppImage from the file manager and from a terminal.
-6. Confirm one Image Filter window opens with the expected title and icon and no
-   terminal traceback.
-7. Close and relaunch it from a directory whose path contains spaces.
-8. If AppImage mounting fails, record the exact message, extract the tarball,
-   and launch its documented executable without installing FUSE.
-9. Confirm the tarball version opens with the same title, icon, and controls.
-10. Open the source-folder and quarantine-folder pickers. Confirm each dialog is
-    usable under the current Fedora session and cancellation changes nothing.
-11. Start KoboldCpp with a vision-capable GGUF and matching `mmproj` on loopback
-    or a private-LAN computer.
-12. Enter the `/v1/` base URL and select **Test Connection**. Confirm the version
-    and discovered model appear.
-13. Try one deliberately public URL and confirm the app rejects it without
-    sending a request.
-14. Select a disposable folder containing copied PNG, JPEG, WebP, BMP, and TIFF
-    examples, including ordinary photos, screenshots, and memes.
-15. Select **Scan Folder**. Check the displayed destination carefully and
-    consent only if it is the intended private server.
-16. Confirm the UI remains responsive, progress advances, previews display, and
-    ordinary photos are omitted from candidate rows.
-17. Confirm the automatic-selection threshold and **Select All**/**Clear All**
-    behavior match the existing settings.
-18. Confirm scanning did not change any source filename, bytes, or location.
-19. Close and reopen the app. Confirm endpoint/model settings, threshold, and
-    activity history persist while candidate rows and checkbox choices do not.
-20. Select a new empty, non-overlapping quarantine folder.
-21. Check only disposable candidates, request quarantine, and inspect every
-    source and destination path before approval.
-22. Decline once and confirm nothing moves.
-23. Repeat and approve one safe disposable move. Confirm only selected files
-    move and `.img-ai-filter-moves.jsonl` appears in the quarantine folder.
-24. Confirm no settings, logs, images, or other files were written beside the
-    AppImage or into the extracted application directory.
-25. Open **Activity History** and confirm expected scan/quarantine events without
-    image content, server address, credentials, or raw responses.
-26. Report Fedora version, desktop environment, Wayland or X11, which artifact
-    was used, and any warnings shown in the terminal.
-
-Reply `Approved` if every applicable step passes. Otherwise provide the failed
-step, exact error text, terminal output, and a screenshot when the failure is
-visible.
+1. Confirm F-010 is merged or obtain explicit permission to work on its branch.
+2. Reconcile this plan with merged code and report material conflicts before
+   implementation.
+3. Record the baseline suite.
+4. Write failing Phase 1 tests and run them.
+5. Implement only Phase 1 and rerun focused tests.
+6. Repeat the failing-test-first cycle for every later phase.
+7. Do not delegate production implementation until the main session has written
+   and observed the relevant failing tests.
+8. Keep all automated network use fake and injected.
+9. Preserve unrelated worktree files, including `packaging-build/`.
+10. Review every delegated diff against this contract.
+11. Run the complete suite only after focused tests pass.
+12. Update documentation to match implemented behavior, not planned behavior.
+13. Give the user the exact GUI command and checklist.
+14. Wait for explicit `Approved`.
+15. Only after approval ask whether the user wants a PR, commit, or push.
 
 ## Acceptance Criteria
 
-- The AppImage and tarball are created from one validated PyInstaller
-  one-directory payload.
-- Both launch on the selected Fedora x86-64 test system without a separately
-  installed Python environment or source checkout.
-- The tarball works without FUSE and neither artifact requires root.
-- Required Python packages, Qt plugins, Pillow codecs, SSL support, application
-  resources, and metadata are present.
-- Missing or optional desktop portal integration does not prevent normal use.
-- Settings and activity history persist in user configuration, not inside or
-  beside the artifacts.
-- Existing endpoint, consent, scan, threshold, privacy, and quarantine contracts
-  remain unchanged.
-- Automated tests remain fully network-blocked.
-- Artifact validation finds no user data, credentials, private datasets, model
-  files, build caches, or source-control metadata.
-- Native-library inspection finds no unexplained unresolved dependency on the
-  supported Fedora target.
-- Desktop and AppStream metadata validate.
-- SHA-256 checksums verify both final artifacts.
-- Documentation accurately states the supported target and external KoboldCpp
-  requirements.
-- The complete automated suite passes.
-- The user approves the Fedora desktop checklist before any Git operation is
-  proposed.
+F-011 is complete only when all of these are true:
 
-## Explicitly Deferred
-
-- Bundling KoboldCpp, GGUF models, or `mmproj` files.
-- GPU driver installation or hardware-specific KoboldCpp builds.
-- ARM/aarch64, 32-bit x86, or other CPU architectures.
-- Declaring support for every Linux distribution.
-- RPM, DEB, Flatpak, Snap, Nix, or system repository packaging.
-- Windows and macOS packaging.
-- Public GitHub release publication.
-- Automatic updates or update metadata.
-- Code signing, certificate procurement, or trusted-store integration.
-- Full byte-for-byte reproducible-build guarantees if upstream tools retain
-  uncontrolled metadata.
-- Bundling a CA trust store or accepting untrusted HTTPS certificates.
-- Activating dormant credential UI or promising every Linux keyring backend.
-- Changing settings identity or adding settings migration.
-- F-008 reliability-audit implementation.
-- Completing the full cross-platform Milestone 6 release-readiness claim.
+1. Update checks occur only after explicit user action.
+2. Stable-only and opt-in test channel behavior are persisted and tested.
+3. Release parsing and version comparison reject malformed and ambiguous input.
+4. Only a newer compatible Linux x86-64 AppImage can be selected.
+5. Downloads are HTTPS-only, bounded, streamed, cancellable, and verified.
+6. The current AppImage is unchanged until verification completes.
+7. Replacement retains one backup and has tested recovery behavior.
+8. Source and portable-tar installations are never replaced.
+9. Restart requires user confirmation and does not use shell parsing.
+10. The GUI remains responsive and safe during check, download, installation,
+    cancellation, shutdown, and stale signals.
+11. The release workflow publishes only complete tested draft releases.
+12. Package version, release tag, metadata, and artifact names agree.
+13. Existing scan, LAN privacy, review, history, and quarantine contracts remain
+    unchanged.
+14. The complete network-blocked automated suite passes.
+15. Packaged artifact inspection passes.
+16. Durable documentation states the privacy and trust limits accurately.
+17. The user completes and approves the desktop checklist.

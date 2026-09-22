@@ -55,6 +55,11 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Do not record review labels. Review check states are temporary and are replaced by every rescan; new rows derive their initial state from the saved confidence threshold.
 - The MVP only moves files to quarantine. It does not delete them, and it offers no automatic restoration.
 - Provide Fedora x86-64 test artifacts as an AppImage and portable tarball built from one PyInstaller payload. Bundle CPython and Python runtime dependencies; keep KoboldCpp, its GGUF model, and `mmproj` external. Treat normal Linux desktop services and compatible base libraries as host-platform requirements, not application dependencies to install separately.
+- Check GitHub for updates only when the user selects **Check for Updates**. Stable releases are the default; a saved setting can include test pre-releases.
+- During an update check, send no images, paths, endpoint settings, credentials, history, machine identifier, or telemetry. Document that GitHub still receives the user's IP address and request timing.
+- Install updates automatically only for a writable Linux x86-64 AppImage. Stream the complete file, require the exact GitHub SHA-256 asset digest, retain one recovery backup, and ask separately before download, installation, and restart.
+- Source and portable-tar launches may report update availability but never replace themselves. Existing AppImages require one final manual download to obtain updater support.
+- Publish version-tagged Linux releases through a tested draft-first workflow. Package metadata, tag, and artifact names must agree before publication.
 
 ## Deferred Decisions
 

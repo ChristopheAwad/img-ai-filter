@@ -19,7 +19,7 @@ LINUX_DIR = ROOT / "packaging" / "linux"
 
 
 def test_project_version_comes_from_pyproject() -> None:
-    assert project_version(ROOT / "pyproject.toml") == "0.1.0"
+    assert project_version(ROOT / "pyproject.toml") == "0.2.0"
 
 
 @pytest.mark.parametrize(
