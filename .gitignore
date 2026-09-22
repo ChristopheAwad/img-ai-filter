@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 dist/
+packaging-build/
+appimagetool
+appimage-runtime
 sample-img/
 evaluation/data/
 evaluation/models/

@@ -88,6 +88,8 @@ Activate the virtual environment, then run:
 python -m img_ai_filter
 ```
 
+## Usage
+
 1. Start KoboldCpp with a vision-capable GGUF and matching `mmproj`.
 2. Enter its `/v1/` base URL. The default is
    `http://192.168.0.239:5001/v1/`.
@@ -120,6 +122,41 @@ rows. The bulk-selection control changes only current review state: it shows
 **Select All** while any row is unchecked, and **Clear All** when every row is
 checked. Automatic selection never starts a quarantine move, which still
 requires exact-path confirmation.
+
+## Linux Test Package
+
+The Linux x86-64 test distribution includes Python, PySide6, Pillow, keyring,
+and the other Python runtime components. It does not include KoboldCpp, a GGUF
+vision model, or the matching `mmproj`. Fedora x86-64 is the first manual test
+target; this is not yet a signed public release for every Linux distribution.
+
+Verify both downloaded artifacts from their folder:
+
+```bash
+sha256sum --check SHA256SUMS
+```
+
+To use the AppImage:
+
+```bash
+chmod +x ImageFilter-0.1.0-x86_64.AppImage
+./ImageFilter-0.1.0-x86_64.AppImage
+```
+
+If AppImage mounting is unavailable, extract the fallback without installing
+Python or FUSE:
+
+```bash
+tar -xzf ImageFilter-0.1.0-linux-x86_64.tar.gz
+./ImageFilter-0.1.0-linux-x86_64/image-filter
+```
+
+The package still needs a normal Linux desktop, graphics drivers, display
+services, and compatible base libraries. Application settings and activity
+history use the normal per-user Qt configuration location. Quarantine move logs
+are written only in the selected quarantine folder. If startup fails, launch
+from a terminal and retain its error text. Portal or FUSE errors do not require
+root access; use the tarball fallback when FUSE is the problem.
 
 ## Tests
 

@@ -54,6 +54,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Let the user view newest-first expandable activity history and clear all app records after explicit confirmation. Clearing app history does not change quarantine move logs.
 - Do not record review labels. Review check states are temporary and are replaced by every rescan; new rows derive their initial state from the saved confidence threshold.
 - The MVP only moves files to quarantine. It does not delete them, and it offers no automatic restoration.
+- Provide Fedora x86-64 test artifacts as an AppImage and portable tarball built from one PyInstaller payload. Bundle CPython and Python runtime dependencies; keep KoboldCpp, its GGUF model, and `mmproj` external. Treat normal Linux desktop services and compatible base libraries as host-platform requirements, not application dependencies to install separately.
 
 ## Deferred Decisions
 
@@ -63,5 +64,5 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Add deletion, duplicate detection, image-quality detection, GIF, and HEIC support.
 - Consider app-managed vision-server installation only after the user-managed LAN workflow is proven.
 - Consider public cloud vision endpoints separately; they are not part of the MVP.
-- Finalize installers, signing, and distribution for each operating system.
-- Complete a bounded first-launch, settings-recovery, large-scan, accessibility, layout, and connection-error reliability pass before packaging.
+- Finalize public installers, signing, and distribution for each operating system after the Linux test-distribution feedback.
+- Complete a bounded first-launch, settings-recovery, large-scan, accessibility, layout, and connection-error reliability pass before claiming public release readiness.
