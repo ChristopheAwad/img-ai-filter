@@ -74,6 +74,14 @@ def test_release_workflow_is_tag_only_draft_first_and_least_privilege() -> None:
     assert "SHA256SUMS" in text
 
 
+def test_release_workflow_verify_step_finds_draft_release() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "releases/tags/" not in text
+    assert 'gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100"' in text
+    assert "select(.tag_name == env.GITHUB_REF_NAME and .draft)" in text
+
+
 def test_manual_packaging_workflow_remains_read_only() -> None:
     text = (ROOT / ".github" / "workflows" / "linux-package.yml").read_text(
         encoding="utf-8"

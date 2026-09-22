@@ -115,7 +115,8 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq 'map(select(.tag_name == env.GITHUB_REF_NAME and .draft)) | first')
+          [[ "$release_json" != "null" && -n "$release_json" ]]
           expected=$(printf '%s\n' "ImageFilter-${VERSION}-x86_64.AppImage" "ImageFilter-${VERSION}-linux-x86_64.tar.gz" SHA256SUMS | sort)
           actual=$(jq -er '[.assets[] | select(.digest | test("^sha256:[0-9a-fA-F]{64}$")) | .name] | sort | .[]' <<< "$release_json")
           [[ "$actual" == "$expected" ]]
