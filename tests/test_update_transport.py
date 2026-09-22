@@ -6,6 +6,7 @@ from threading import Event
 
 import pytest
 
+import img_ai_filter.update_transport as update_transport_module
 from img_ai_filter.update_release import UpdateAsset
 from img_ai_filter.update_transport import (
     METADATA_URL,
@@ -288,3 +289,21 @@ def test_download_rejects_unapproved_initial_url(tmp_path: Path) -> None:
             connection_factory=ConnectionFactory([]),
         )
     assert list(tmp_path.iterdir()) == []
+
+
+def test_download_succeeds_without_fchmod(tmp_path: Path, monkeypatch) -> None:
+    data = b"appimage-data"
+    response = FakeResponse(data, headers={"Content-Length": str(len(data))})
+    factory = ConnectionFactory([response])
+    monkeypatch.delattr(update_transport_module.os, "fchmod", raising=False)
+
+    verified = download_appimage(
+        _asset(data), directory=tmp_path, connection_factory=factory
+    )
+
+    assert verified.path.read_bytes() == data
+    assert verified.size == len(data)
+    assert verified.sha256 == hashlib.sha256(data).hexdigest()
+    assert verified.path.parent == tmp_path
+    assert verified.path.name.startswith(".ImageFilter-update-")
+    assert [record[0] for record in factory.records if record[0] == "close"] == ["close"]

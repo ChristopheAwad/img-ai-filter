@@ -45,6 +45,7 @@ def main_action_buttons(window: MainWindow) -> tuple[QAbstractButton, ...]:
         window.cancel_button,
         window.activity_history_button,
         window.settings_button,
+        window.check_updates_button,
         window.select_quarantine_button,
         window.forget_quarantine_button,
         window.move_quarantine_button,
