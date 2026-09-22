@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 from PySide6.QtCore import QSettings, QSize, QThread, QTimer, Qt
-from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtGui import QAction, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QAbstractItemView,
@@ -27,11 +27,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -78,7 +80,6 @@ from img_ai_filter.settings import (
     MIN_AUTO_SELECT_CONFIDENCE_PERCENT,
     QUARANTINE_FOLDER_KEY,
     SettingsStatus,
-    clear_quarantine_folder,
     load_auto_select_confidence,
     load_include_test_releases,
     load_quarantine_folder,
@@ -493,11 +494,35 @@ class MainWindow(QMainWindow):
 
         header = QFrame()
         header.setObjectName("header")
-        header_layout = QVBoxLayout(header)
+        header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(28, 24, 28, 22)
-        header_layout.setSpacing(7)
-        header_layout.addWidget(title)
-        header_layout.addWidget(description)
+        header_layout.setSpacing(16)
+        header_text_layout = QVBoxLayout()
+        header_text_layout.setSpacing(7)
+        header_text_layout.addWidget(title)
+        header_text_layout.addWidget(description)
+        header_layout.addLayout(header_text_layout, 1)
+
+        self.application_menu_button = QToolButton(header)
+        self.application_menu_button.setObjectName("applicationMenuButton")
+        self.application_menu_button.setText("...")
+        self.application_menu_button.setToolTip("Application menu")
+        self.application_menu_button.setAccessibleName("Application menu")
+        self.application_menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.application_menu_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.application_menu = QMenu(self.application_menu_button)
+        self.settings_action = QAction("Settings", self)
+        self.settings_action.triggered.connect(self._show_settings)
+        self.check_updates_action = QAction("Check for Updates", self)
+        self.check_updates_action.triggered.connect(self._request_update_check)
+        self.application_menu.addAction(self.settings_action)
+        self.application_menu.addAction(self.check_updates_action)
+        self.application_menu_button.setMenu(self.application_menu)
+        header_layout.addWidget(
+            self.application_menu_button, 0, Qt.AlignmentFlag.AlignTop
+        )
 
         server_heading = QLabel("KoboldCpp server")
         server_heading.setObjectName("sectionHeading")
@@ -550,24 +575,12 @@ class MainWindow(QMainWindow):
         self.activity_history_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.activity_history_button.clicked.connect(self._show_activity_history)
 
-        self.settings_button = QPushButton("Settings")
-        self.settings_button.setObjectName("secondaryButton")
-        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.settings_button.clicked.connect(self._show_settings)
-
-        self.check_updates_button = QPushButton("Check for Updates")
-        self.check_updates_button.setObjectName("secondaryButton")
-        self.check_updates_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.check_updates_button.clicked.connect(self._request_update_check)
-
         folder_buttons = QGridLayout()
         folder_buttons.setSpacing(8)
         folder_buttons.addWidget(self.select_button, 0, 0)
         folder_buttons.addWidget(self.scan_button, 0, 1)
         folder_buttons.addWidget(self.cancel_button, 1, 0)
         folder_buttons.addWidget(self.activity_history_button, 1, 1)
-        folder_buttons.addWidget(self.settings_button, 2, 0, 1, 2)
-        folder_buttons.addWidget(self.check_updates_button, 3, 0, 1, 2)
         for column in range(2):
             folder_buttons.setColumnStretch(column, 1)
 
@@ -591,11 +604,6 @@ class MainWindow(QMainWindow):
         self.select_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.select_quarantine_button.clicked.connect(self._choose_quarantine)
 
-        self.forget_quarantine_button = QPushButton("Forget Quarantine Folder")
-        self.forget_quarantine_button.setObjectName("secondaryButton")
-        self.forget_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.forget_quarantine_button.clicked.connect(self._forget_quarantine)
-
         self.move_quarantine_button = QPushButton("Move Checked to Quarantine")
         self.move_quarantine_button.setObjectName("primaryButton")
         self.move_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -605,8 +613,7 @@ class MainWindow(QMainWindow):
         quarantine_buttons = QGridLayout()
         quarantine_buttons.setSpacing(12)
         quarantine_buttons.addWidget(self.select_quarantine_button, 0, 0)
-        quarantine_buttons.addWidget(self.forget_quarantine_button, 1, 0)
-        quarantine_buttons.addWidget(self.move_quarantine_button, 2, 0)
+        quarantine_buttons.addWidget(self.move_quarantine_button, 1, 0)
         quarantine_buttons.setColumnStretch(0, 1)
 
         self.move_log_label = QLabel("Move log: not written yet.")
@@ -683,10 +690,7 @@ class MainWindow(QMainWindow):
             self.scan_button,
             self.cancel_button,
             self.activity_history_button,
-            self.settings_button,
-            self.check_updates_button,
             self.select_quarantine_button,
-            self.forget_quarantine_button,
             self.move_quarantine_button,
             self.selection_button,
         ):
@@ -750,7 +754,6 @@ class MainWindow(QMainWindow):
             or (update_active and self._update_kind in {"check", "download"})
         )
         self.select_quarantine_button.setEnabled(not busy)
-        self.forget_quarantine_button.setEnabled(not busy and quarantine_ready)
         self.move_quarantine_button.setEnabled(
             not busy
             and move_roots_ready
@@ -760,8 +763,8 @@ class MainWindow(QMainWindow):
         self.selection_button.setText(selection_text)
         self.selection_button.setEnabled(not busy and selection_ready)
         self.activity_history_button.setEnabled(not busy)
-        self.settings_button.setEnabled(not busy)
-        self.check_updates_button.setEnabled(not busy)
+        self.settings_action.setEnabled(not busy)
+        self.check_updates_action.setEnabled(not busy)
 
     def _selection_button_state(self) -> tuple[str, bool]:
         count = self.results_list.count()
@@ -1472,18 +1475,6 @@ class MainWindow(QMainWindow):
             )
         self._update_controls()
 
-    def _forget_quarantine(self) -> None:
-        if self._thread is not None or self._update_thread is not None:
-            return
-        try:
-            clear_quarantine_folder(self._settings_store)
-        except Exception:
-            pass
-        self._quarantine_folder = None
-        self._quarantine_missing = False
-        self.quarantine_label.setText("No quarantine folder selected.")
-        self._update_controls()
-
     def _request_quarantine_move(self) -> None:
         if (
             self._thread is not None
@@ -1743,6 +1734,24 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 color: #c8d7e4;
                 font-size: 14px;
+            }
+            QToolButton#applicationMenuButton {
+                background: transparent;
+                border: 1px solid #6f899d;
+                border-radius: 4px;
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+                padding: 2px 10px 7px 10px;
+            }
+            QToolButton#applicationMenuButton:hover,
+            QToolButton#applicationMenuButton:focus {
+                background: #25425e;
+                border-color: #c8d7e4;
+            }
+            QToolButton#applicationMenuButton:disabled {
+                color: #8898a4;
+                border-color: #40566b;
             }
             QLabel#sectionHeading {
                 font-size: 16px;

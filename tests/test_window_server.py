@@ -330,7 +330,7 @@ def test_accepting_consent_runs_background_scan_and_shows_exact_summary(
     assert not window.test_connection_button.isEnabled()
     assert not window.scan_button.isEnabled()
     assert window.cancel_button.isEnabled()
-    assert not window.settings_button.isEnabled()
+    assert not window.settings_action.isEnabled()
     timer_fired = []
     QTimer.singleShot(0, lambda: timer_fired.append(True))
     qtbot.waitUntil(lambda: timer_fired == [True])
@@ -343,7 +343,7 @@ def test_accepting_consent_runs_background_scan_and_shows_exact_summary(
         "Elapsed: <1 sec."
     )
     assert not window.cancel_button.isEnabled()
-    assert window.settings_button.isEnabled()
+    assert window.settings_action.isEnabled()
 
 
 def test_completed_operation_thread_is_scheduled_for_deletion(
@@ -623,11 +623,9 @@ def test_quarantine_starts_without_folder_and_move_is_disabled(qtbot) -> None:
     qtbot.addWidget(window)
 
     assert window.select_quarantine_button.text() == "Select Quarantine Folder"
-    assert window.forget_quarantine_button.text() == "Forget Quarantine Folder"
     assert window.move_quarantine_button.text() == "Move Checked to Quarantine"
     assert "No quarantine folder" in window.quarantine_label.text()
     assert not window.move_quarantine_button.isEnabled()
-    assert not window.forget_quarantine_button.isEnabled()
 
 
 def test_stored_quarantine_folder_loads_at_startup(qtbot, tmp_path: Path) -> None:
@@ -640,7 +638,6 @@ def test_stored_quarantine_folder_loads_at_startup(qtbot, tmp_path: Path) -> Non
     qtbot.addWidget(window)
 
     assert window.quarantine_label.text() == str(quarantine)
-    assert window.forget_quarantine_button.isEnabled()
 
 
 def test_stored_quarantine_folder_that_disappeared_is_flagged(
@@ -1069,24 +1066,6 @@ def test_move_worker_exception_is_safe_and_not_leaked(
     )
 
     assert private not in window.status_label.text()
-
-
-def test_forgetting_quarantine_folder_clears_it_and_disables_move(
-    qtbot, tmp_path: Path
-) -> None:
-    quarantine = tmp_path / "quarantine"
-    quarantine.mkdir()
-    store = MemoryStore()
-    store.write(QUARANTINE_FOLDER_KEY, str(quarantine))
-    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
-    qtbot.addWidget(window)
-
-    window.forget_quarantine_button.click()
-
-    assert QUARANTINE_FOLDER_KEY not in store.values
-    assert "No quarantine folder" in window.quarantine_label.text()
-    assert not window.forget_quarantine_button.isEnabled()
-    assert not window.move_quarantine_button.isEnabled()
 
 
 def test_move_button_is_disabled_while_scanning(
@@ -1652,12 +1631,12 @@ def test_candidate_selection_settings_dialog_failed_save_stays_open(qtbot) -> No
     assert "private" not in dialog.error_label.text().lower()
 
 
-def test_settings_button_is_available_while_idle(qtbot) -> None:
+def test_settings_action_is_available_while_idle(qtbot) -> None:
     window = MainWindow(settings_store=MemoryStore())
     qtbot.addWidget(window)
 
-    assert window.settings_button.text() == "Settings"
-    assert window.settings_button.isEnabled()
+    assert window.settings_action.text() == "Settings"
+    assert window.settings_action.isEnabled()
 
 
 def test_saved_threshold_changes_next_scan_not_current_rows(
@@ -1701,7 +1680,7 @@ def test_saved_threshold_changes_next_scan_not_current_rows(
             return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(window_module, "CandidateSelectionSettingsDialog", AcceptedDialog)
-    window.settings_button.click()
+    window.settings_action.trigger()
 
     assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
     window.scan_button.click()
