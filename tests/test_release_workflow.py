@@ -82,3 +82,12 @@ def test_manual_packaging_workflow_remains_read_only() -> None:
     assert "contents: read" in text
     assert "contents: write" not in text
     assert "gh release" not in text
+
+
+@pytest.mark.parametrize("workflow_name", ["linux-package.yml", "release.yml"])
+def test_linux_workflows_install_qt_egl_runtime(workflow_name: str) -> None:
+    text = (ROOT / ".github" / "workflows" / workflow_name).read_text(
+        encoding="utf-8"
+    )
+
+    assert "apt-get install --yes libegl1" in text
