@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
@@ -398,6 +399,24 @@ def test_completed_operation_thread_is_scheduled_for_deletion(
     qtbot.waitUntil(lambda: len(deleted) == 1)
 
     assert window._thread is None
+
+
+def test_completed_operation_thread_wrapper_is_collectable(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: _summary(),
+        confirm_transfer=lambda *_: True,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+
+    window.scan_button.click()
+    thread_reference = weakref.ref(window._thread)
+    qtbot.waitUntil(lambda: window._thread is None)
+    qtbot.waitUntil(lambda: thread_reference() is None)
 
 
 def test_candidate_rows_include_details_and_start_unchecked(

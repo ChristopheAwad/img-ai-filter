@@ -905,6 +905,7 @@ class MainWindow(QMainWindow):
             self._operation_error = error
 
     def _operation_finished(self, generation: int) -> None:
+        # The start guards permit only one application operation at a time.
         thread = self._thread
         if thread is None:
             return
@@ -1319,6 +1320,7 @@ class MainWindow(QMainWindow):
             self._update_error = error
 
     def _update_finished(self, generation: int) -> None:
+        # The start guards permit only one application operation at a time.
         if self._update_thread is None:
             return
         kind = self._update_kind
