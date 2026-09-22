@@ -9,7 +9,7 @@ from threading import Event
 import time
 from typing import Any
 
-from PySide6.QtCore import QSettings, QSize, QThread, QTimer, Qt
+from PySide6.QtCore import QSettings, QSize, QTimer, Qt
 from PySide6.QtGui import QAction, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -874,10 +874,9 @@ class MainWindow(QMainWindow):
             lambda error, token=generation: self._operation_failed(token, error)
         )
         thread.finished.connect(
-            lambda token=generation, current=thread: self._operation_finished(
-                token, current
-            )
+            lambda token=generation: self._operation_finished(token)
         )
+        thread.finished.connect(thread.deleteLater)
         self._thread = thread
         self._update_controls()
         thread.start()
@@ -905,9 +904,10 @@ class MainWindow(QMainWindow):
         if self._is_current(generation):
             self._operation_error = error
 
-    def _operation_finished(self, generation: int, thread: QThread) -> None:
-        thread.deleteLater()
-        if self._thread is not thread:
+    def _operation_finished(self, generation: int) -> None:
+        # The start guards permit only one application operation at a time.
+        thread = self._thread
+        if thread is None:
             return
 
         kind = self._operation_kind
@@ -1296,10 +1296,9 @@ class MainWindow(QMainWindow):
             lambda error, token=generation: self._update_failed(token, error)
         )
         thread.finished.connect(
-            lambda token=generation, current=thread: self._update_finished(
-                token, current
-            )
+            lambda token=generation: self._update_finished(token)
         )
+        thread.finished.connect(thread.deleteLater)
         self._update_thread = thread
         self._update_controls()
         thread.start()
@@ -1320,9 +1319,9 @@ class MainWindow(QMainWindow):
         if self._update_is_current(generation):
             self._update_error = error
 
-    def _update_finished(self, generation: int, thread: OperationThread) -> None:
-        thread.deleteLater()
-        if self._update_thread is not thread:
+    def _update_finished(self, generation: int) -> None:
+        # The start guards permit only one application operation at a time.
+        if self._update_thread is None:
             return
         kind = self._update_kind
         result = self._update_result
