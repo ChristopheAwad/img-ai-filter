@@ -155,6 +155,8 @@ def test_entrypoint_supports_bounded_packaged_smoke_test() -> None:
     )
 
     assert "--smoke-test" in contents
+    assert "certifi.where()" in contents
+    assert "ssl.create_default_context" in contents
     assert "app.processEvents()" in contents
     assert "window.close()" in contents
 
@@ -165,6 +167,10 @@ def test_pyproject_declares_bounded_certifi_runtime_dependency() -> None:
     assert list(requirement.specifier), (
         "certifi runtime dependency must use a bounded version range"
     )
+    assert any(
+        specification.operator in {"<", "<=", "=="}
+        for specification in requirement.specifier
+    ), "certifi runtime dependency must declare an upper bound"
 
 
 def test_runtime_constraints_pin_certifi_exactly() -> None:

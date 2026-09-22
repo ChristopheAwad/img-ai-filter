@@ -39,6 +39,9 @@ def _valid_payload(tmp_path: Path) -> Path:
     (resources / "io.github.img_ai_filter.ImageFilter.svg").write_text(
         "<svg/>", encoding="utf-8"
     )
+    certifi_dir = internal / "certifi"
+    certifi_dir.mkdir(parents=True)
+    (certifi_dir / "cacert.pem").write_text("-----BEGIN CERTIFICATE-----\n", encoding="utf-8")
     (payload / "README.txt").write_text("readme\n", encoding="utf-8")
     (payload / "THIRD_PARTY_NOTICES.txt").write_text("notices\n", encoding="utf-8")
     return payload
@@ -65,6 +68,7 @@ def test_packaging_inputs_exist_and_are_pinned() -> None:
     assert "PySide6==6.11.2" in constraints
     assert "Pillow==12.3.0" in constraints
     assert "keyring==25.7.0" in constraints
+    assert "certifi==2026.7.22" in constraints
     assert os.access(apprun, os.X_OK)
 
 
@@ -78,6 +82,7 @@ def test_pyinstaller_spec_has_required_inputs_and_exclusions() -> None:
     assert "copy_metadata(\"img-ai-filter\")" in contents
     assert "collect_data_files(\"keyring\")" in contents
     assert "collect_submodules(\"keyring\")" in contents
+    assert "collect_data_files(\"certifi\")" in contents
     assert "PIL.WebPImagePlugin" in contents
     assert "exclude_binaries=True" in contents
     assert "COLLECT(" in contents
@@ -105,6 +110,7 @@ def test_validate_payload_accepts_minimum_complete_payload(tmp_path: Path) -> No
     [
         "image-filter",
         "_internal/img_ai_filter/resources/io.github.img_ai_filter.ImageFilter.svg",
+        "_internal/certifi/cacert.pem",
         "README.txt",
         "THIRD_PARTY_NOTICES.txt",
     ],
