@@ -446,6 +446,61 @@ Implementation order:
 11. Add a draft-first release workflow with consistent package versions, tags, artifact names, and SHA-256 metadata.
 12. Update durable documentation, run focused tests and the complete offline suite, inspect packaged artifacts, and complete the desktop GUI checklist before any Git operation.
 
+### F-012: Candidate Review UI Reliability
+
+- **Status:** in progress
+- **Tier:** Tier 2, review usability and accessibility reliability
+- **Effort:** Medium because candidate rows, operation cancellation, status recovery, disabled-state guidance, keyboard focus, and empty results cross the main-window rendering and worker lifecycle
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`
+- **Likely implementation files:** main window, GUI scan/update/quarantine tests, and focused layout/accessibility tests
+- **Depends on:** shipped F-001 candidate workflow, F-004 quarantine workflow, F-005 thumbnails, F-009 confidence selection, and F-011 update workflow
+- **Blocks:** the bounded accessibility, layout, and connection-error reliability pass required before public release readiness
+
+Improve the existing review workflow without redesigning the application. Render each candidate as a structured, wrapping row that keeps its preview, review check state, exact path, category, reason, and confidence readable. Restore visible keyboard focus. Give successful zero-candidate scans a clear empty state. Explain why quarantine cannot start when source and quarantine roots conflict. Let users cancel a connection test through the existing Cancel control. Ensure every update-check, download, and install exit path replaces temporary progress text with an accurate final status.
+
+Dependency graph:
+
+```text
+Shipped candidate, quarantine, confidence, and update workflows
+                            |
+                            v
+F-012 failure, boundary, accessibility, and layout tests
+                            |
+                            v
+F-012 structured candidate rows + explicit empty/blocked states
+                            |
+                            v
+F-012 connection cancellation + accurate update statuses
+                            |
+                            v
+Release-readiness accessibility and reliability evidence
+```
+
+Implementation order:
+
+1. Approve the detailed test-first contract in `feature.md`.
+2. Record the complete network-blocked regression baseline.
+3. Write failing tests for empty results, long candidate content, keyboard focus, invalid quarantine roots, connection cancellation, and every stale update-status branch.
+4. Add structured candidate row widgets while preserving candidate identity, threshold-derived check states, bulk selection, exact-path confirmation, and 96-pixel in-memory previews.
+5. Add explicit empty and blocked-state guidance without weakening quarantine validation.
+6. Route connection cancellation through the existing cancellation event and active transport without adding retries or GUI-thread network work.
+7. Set accurate final status text for all update outcomes, including declined download or installation.
+8. Run focused GUI tests and the complete network-blocked suite.
+9. Complete manual desktop verification at default and minimum window sizes before any Git operation.
+
+## UI Backlog
+
+These suggestions came from the 2026-09-22 UI audit. They are intentionally outside F-012 and need separate prioritization before implementation.
+
+- Make changing scan, quarantine, and update statuses more useful to assistive technology. Research the smallest reliable PySide6 announcement mechanism before choosing an implementation.
+- Respect operating-system themes, high-contrast settings, and font scaling instead of applying fixed colors and pixel font sizes to the complete widget tree.
+- Replace the visible `...` application-menu label with a clearer platform-safe menu treatment while retaining its accessible name and fixed-header placement.
+- Give settings-save failures a distinct error treatment and move keyboard or assistive-technology attention to the error.
+- Adapt horizontal controls at narrow widths instead of relying only on vertical scrolling and a 560-pixel minimum width.
+- Remove extended multi-selection from Activity History unless row-specific actions are added.
+- Add useful keyboard shortcuts or mnemonics for frequent actions after checking platform conventions and shortcut conflicts.
+- Rebalance the main window so candidate review has greater visual priority after a scan, while server and folder setup become quieter supporting controls.
+
 ## Milestone 1: Desktop Foundation and Folder Scan
 
 **Status:** shipped 2026-09-19 (PR #1). Native folder-picker follow-up shipped 2026-09-19 (PR #2).

@@ -9,7 +9,8 @@ from threading import Event
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QCheckBox, QDialog, QFileDialog, QLabel, QMessageBox
 
 import img_ai_filter.window as window_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
@@ -214,6 +215,35 @@ def test_connection_failure_is_safe_and_retryable(qtbot) -> None:
     assert attempts == 2
 
 
+def test_connection_test_can_be_cancelled(qtbot) -> None:
+    transport = FakeTransport()
+    entered = Event()
+
+    def discover(config, received_transport):
+        entered.set()
+        while received_transport.cancel_calls == 0:
+            Event().wait(0.001)
+        raise VisionConnectionError("The connection test was cancelled.")
+
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        transport_factory=lambda: transport,
+        discover=discover,
+    )
+    qtbot.addWidget(window)
+
+    window.test_connection_button.click()
+    qtbot.waitUntil(entered.is_set)
+
+    assert window.cancel_button.isEnabled()
+    window.cancel_button.click()
+    qtbot.waitUntil(lambda: window._thread is None)
+
+    assert transport.cancel_calls == 1
+    assert "cancel" in window.connection_label.text().lower()
+    assert window.test_connection_button.isEnabled()
+
+
 def test_editing_server_url_invalidates_discovered_model(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
@@ -405,11 +435,28 @@ def test_candidate_rows_include_details_and_start_unchecked(
     qtbot.waitUntil(lambda: window.results_list.count() == 1)
 
     item = window.results_list.item(0)
-    assert str(candidate_path) in item.text()
-    assert "captioned meme" in item.text()
-    assert "Large caption above a reaction image." in item.text()
-    assert "87%" in item.text()
+    row = window.results_list.itemWidget(item)
+    assert row is not None
+    path_label = row.findChild(QLabel, "candidatePath")
+    meta_label = row.findChild(QLabel, "candidateMeta")
+    reason_label = row.findChild(QLabel, "candidateReason")
+    checkbox = row.findChild(QCheckBox, "candidateCheckBox")
+    preview_label = row.findChild(QLabel, "candidatePreview")
+    assert path_label.text() == str(candidate_path)
+    assert path_label.wordWrap()
+    assert meta_label.text() == "captioned meme | 87%"
+    assert reason_label.text() == "Large caption above a reaction image."
+    assert reason_label.wordWrap()
+    assert checkbox is not None
+    assert preview_label is not None
+    assert not preview_label.pixmap().isNull()
+    assert item.data(Qt.ItemDataRole.UserRole) is summary.candidates[0]
     assert item.checkState() == Qt.CheckState.Unchecked
+
+    QTest.mouseClick(checkbox, Qt.MouseButton.LeftButton)
+
+    assert item.checkState() == Qt.CheckState.Checked
+    assert window.selection_button.text() == "Clear All"
     assert window.status_label.text() == (
         "Completed: 3 discovered, 3 analyzed, 1 candidate, 1 ordinary, "
         "1 uncertain, 0 failed, 0 unreadable folders. Elapsed: <1 sec."
@@ -783,6 +830,27 @@ def test_overlapping_source_selected_after_quarantine_disables_move(
     window.results_list.item(0).setCheckState(Qt.CheckState.Checked)
 
     assert not window.move_quarantine_button.isEnabled()
+
+
+def test_overlapping_saved_quarantine_explains_why_move_is_disabled(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    quarantine = source / "quarantine"
+    source.mkdir()
+    quarantine.mkdir()
+    store = MemoryStore()
+    store.write(QUARANTINE_FOLDER_KEY, str(quarantine))
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    _select(window, monkeypatch, source)
+
+    assert not window.move_quarantine_button.isEnabled()
+    assert window.quarantine_validation_label.isVisibleTo(window)
+    assert window.quarantine_validation_label.text() == (
+        "The source and quarantine folders must be separate."
+    )
 
 
 def test_default_confirm_uses_source_and_destination_pairs(
@@ -1224,7 +1292,7 @@ def test_close_timeout_and_repeated_close_record_quarantine_once(
     assert records[0].moved == 1
 
 
-def test_candidate_rows_store_candidate_and_thumbnail_icon(
+def test_candidate_rows_store_candidate_and_show_one_custom_thumbnail(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
     source_file = tmp_path / "source" / "shot.png"
@@ -1234,9 +1302,14 @@ def test_candidate_rows_store_candidate_and_thumbnail_icon(
     )
 
     item = window.results_list.item(0)
+    row = window.results_list.itemWidget(item)
+    preview = row.findChild(QLabel, "candidatePreview")
 
     assert item.data(Qt.ItemDataRole.UserRole) is candidate
-    assert not item.icon().isNull()
+    assert item.icon().isNull()
+    assert not item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert preview is not None
+    assert not preview.pixmap().isNull()
 
 
 def test_invalid_thumbnail_bytes_do_not_break_rows(
@@ -1258,9 +1331,11 @@ def test_invalid_thumbnail_bytes_do_not_break_rows(
     )
 
     item = window.results_list.item(0)
+    row = window.results_list.itemWidget(item)
 
     assert item.icon().isNull()
-    assert str(source_file) in item.text()
+    assert row.findChild(QLabel, "candidatePreview") is None
+    assert row.findChild(QLabel, "candidatePath").text() == str(source_file)
 
 
 def test_scan_live_elapsed_status_and_completed_history_record(
@@ -1850,6 +1925,10 @@ def test_empty_completed_scan_leaves_selection_disabled(
     qtbot.waitUntil(lambda: "1 ordinary" in window.status_label.text())
 
     assert window.results_list.count() == 0
+    assert window.results_empty_label.isVisibleTo(window)
+    assert window.results_empty_label.text() == (
+        "No likely screenshots or memes were found."
+    )
     assert window.selection_button.text() == "Select All"
     assert not window.selection_button.isEnabled()
 
@@ -2044,6 +2123,9 @@ def test_select_all_checks_every_row_and_switches_to_clear_all(
 
     assert window.results_list.item(0).checkState() == Qt.CheckState.Checked
     assert window.results_list.item(1).checkState() == Qt.CheckState.Checked
+    for index in range(2):
+        row = window.results_list.itemWidget(window.results_list.item(index))
+        assert row.findChild(QCheckBox, "candidateCheckBox").isChecked()
     assert window.selection_button.text() == "Clear All"
 
 
@@ -2065,6 +2147,9 @@ def test_clear_all_unchecks_every_row_and_switches_to_select_all(
 
     assert window.results_list.item(0).checkState() == Qt.CheckState.Unchecked
     assert window.results_list.item(1).checkState() == Qt.CheckState.Unchecked
+    for index in range(2):
+        row = window.results_list.itemWidget(window.results_list.item(index))
+        assert not row.findChild(QCheckBox, "candidateCheckBox").isChecked()
     assert window.selection_button.text() == "Select All"
 
 

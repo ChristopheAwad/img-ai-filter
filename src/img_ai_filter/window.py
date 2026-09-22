@@ -604,6 +604,11 @@ class MainWindow(QMainWindow):
         self.select_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.select_quarantine_button.clicked.connect(self._choose_quarantine)
 
+        self.quarantine_validation_label = QLabel()
+        self.quarantine_validation_label.setObjectName("status")
+        self.quarantine_validation_label.setWordWrap(True)
+        self.quarantine_validation_label.hide()
+
         self.move_quarantine_button = QPushButton("Move Checked to Quarantine")
         self.move_quarantine_button.setObjectName("primaryButton")
         self.move_quarantine_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -644,6 +649,13 @@ class MainWindow(QMainWindow):
         results_policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
         self.results_list.setSizePolicy(results_policy)
 
+        self.results_empty_label = QLabel(
+            "No likely screenshots or memes were found."
+        )
+        self.results_empty_label.setObjectName("status")
+        self.results_empty_label.setWordWrap(True)
+        self.results_empty_label.hide()
+
         content_widget = QWidget()
         content = QVBoxLayout(content_widget)
         content.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
@@ -660,10 +672,12 @@ class MainWindow(QMainWindow):
         content.addSpacing(8)
         content.addWidget(quarantine_heading)
         content.addWidget(self.quarantine_label)
+        content.addWidget(self.quarantine_validation_label)
         content.addLayout(quarantine_buttons)
         content.addWidget(self.move_log_label)
         content.addSpacing(6)
         content.addLayout(results_status_row)
+        content.addWidget(self.results_empty_label)
         content.addWidget(self.results_list, 1)
 
         self.content_scroll = QScrollArea()
@@ -701,8 +715,8 @@ class MainWindow(QMainWindow):
         self.server_url_input.textChanged.connect(self._server_url_edited)
         self.test_connection_button.clicked.connect(self._test_connection)
         self.scan_button.clicked.connect(self._request_scan)
-        self.cancel_button.clicked.connect(self._cancel_scan)
-        self.results_list.itemChanged.connect(lambda *_: self._update_controls())
+        self.cancel_button.clicked.connect(self._cancel_operation)
+        self.results_list.itemChanged.connect(self._candidate_item_changed)
         self._update_controls()
 
     @staticmethod
@@ -733,16 +747,19 @@ class MainWindow(QMainWindow):
             self._quarantine_folder is not None and not self._quarantine_missing
         )
         move_roots_ready = False
+        quarantine_validation_message = ""
         if quarantine_ready and self._selected_folder is not None:
             try:
                 validate_quarantine_roots(
                     self._selected_folder,
                     self._quarantine_folder,
                 )
-            except QuarantineError:
-                pass
+            except QuarantineError as error:
+                quarantine_validation_message = str(error)
             else:
                 move_roots_ready = True
+        self.quarantine_validation_label.setText(quarantine_validation_message)
+        self.quarantine_validation_label.setVisible(bool(quarantine_validation_message))
         self.select_button.setEnabled(not busy)
         self.server_url_input.setEnabled(not busy)
         self.test_connection_button.setEnabled(not busy)
@@ -750,7 +767,7 @@ class MainWindow(QMainWindow):
             not busy and self._selected_folder is not None and ready
         )
         self.cancel_button.setEnabled(
-            (active and self._operation_kind == "scan")
+            (active and self._operation_kind in {"connection", "scan"})
             or (update_active and self._update_kind in {"check", "download"})
         )
         self.select_quarantine_button.setEnabled(not busy)
@@ -774,6 +791,16 @@ class MainWindow(QMainWindow):
             if self.results_list.item(index).checkState() != Qt.CheckState.Checked:
                 return "Select All", True
         return "Clear All", True
+
+    def _candidate_item_changed(self, item: QListWidgetItem) -> None:
+        row = self.results_list.itemWidget(item)
+        if row is not None:
+            checkbox = row.findChild(QCheckBox, "candidateCheckBox")
+            if checkbox is not None:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(item.checkState() == Qt.CheckState.Checked)
+                checkbox.blockSignals(False)
+        self._update_controls()
 
     def _toggle_selection(self) -> None:
         count = self.results_list.count()
@@ -995,6 +1022,7 @@ class MainWindow(QMainWindow):
         cancel_event = Event()
         self._cancel_event = cancel_event
         self.results_list.clear()
+        self.results_empty_label.hide()
         def operation(progress: Callable[[int, int], None]) -> ScanSummary:
             transport = self._transport_factory()
             self._active_transport = transport
@@ -1012,14 +1040,14 @@ class MainWindow(QMainWindow):
         self._render_live_scan_status()
         self._scan_timer.start()
 
-    def _cancel_scan(self) -> None:
+    def _cancel_operation(self) -> None:
         if self._update_thread is not None and self._update_kind in {"check", "download"}:
             if self._update_cancel_event is not None:
                 self._update_cancel_event.set()
             self.status_label.setText("Cancelling update operation...")
             self.cancel_button.setEnabled(False)
             return
-        if self._thread is None or self._operation_kind != "scan":
+        if self._thread is None or self._operation_kind not in {"connection", "scan"}:
             return
         if self._cancel_event is not None:
             self._cancel_event.set()
@@ -1027,12 +1055,17 @@ class MainWindow(QMainWindow):
         cancel_active = getattr(transport, "cancel_active", None)
         if callable(cancel_active):
             cancel_active()
-        self._scan_phase = "cancelling"
-        self._render_live_scan_status()
+        if self._operation_kind == "connection":
+            self.connection_label.setText("Cancelling connection test...")
+            self.cancel_button.setEnabled(False)
+        else:
+            self._scan_phase = "cancelling"
+            self._render_live_scan_status()
 
     def _finish_scan(self, summary: Any, error: Exception | None) -> None:
         duration_ms, saved = self._record_scan(summary, error)
         self.results_list.clear()
+        self.results_empty_label.hide()
         if error is not None:
             if isinstance(error, ScanError):
                 status = str(error)
@@ -1048,27 +1081,73 @@ class MainWindow(QMainWindow):
 
         for candidate in summary.candidates:
             confidence = round(candidate.confidence * 100)
-            text = (
-                f"{candidate.path} | {candidate.category.replace('_', ' ')} | "
-                f"{candidate.reason} | {confidence}%"
-            )
-            item = QListWidgetItem(text)
+            category = candidate.category.replace("_", " ")
+            item = QListWidgetItem(str(candidate.path))
             item.setData(Qt.ItemDataRole.UserRole, candidate)
             item.setToolTip(
-                f"{candidate.path}\n{candidate.category.replace('_', ' ')} "
+                f"{candidate.path}\n{category} "
                 f"({confidence}%)\n{candidate.reason}"
             )
             preview = QPixmap.fromImage(QImage.fromData(candidate.thumbnail_png))
             if not preview.isNull():
-                item.setIcon(QIcon(preview))
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                preview = preview.scaled(
+                    96,
+                    96,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
             threshold = self._auto_select_confidence_percent / 100
             item.setCheckState(
                 Qt.CheckState.Checked
                 if candidate.confidence >= threshold
                 else Qt.CheckState.Unchecked
             )
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             self.results_list.addItem(item)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(8, 7, 8, 7)
+            row_layout.setSpacing(12)
+            checkbox = QCheckBox()
+            checkbox.setObjectName("candidateCheckBox")
+            checkbox.setAccessibleName(f"Select {candidate.path}")
+            checkbox.setChecked(item.checkState() == Qt.CheckState.Checked)
+            checkbox.toggled.connect(
+                lambda checked, candidate_item=item: candidate_item.setCheckState(
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                )
+            )
+            row_layout.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
+            if not preview.isNull():
+                preview_label = QLabel()
+                preview_label.setObjectName("candidatePreview")
+                preview_label.setPixmap(preview)
+                preview_label.setFixedSize(96, 96)
+                preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                row_layout.addWidget(preview_label)
+            details = QVBoxLayout()
+            details.setSpacing(4)
+            path_label = QLabel(str(candidate.path))
+            path_label.setObjectName("candidatePath")
+            path_label.setWordWrap(True)
+            meta_label = QLabel(f"{category} | {confidence}%")
+            meta_label.setObjectName("candidateMeta")
+            reason_label = QLabel(candidate.reason)
+            reason_label.setObjectName("candidateReason")
+            reason_label.setWordWrap(True)
+            details.addWidget(path_label)
+            details.addWidget(meta_label)
+            details.addWidget(reason_label)
+            details.addStretch(1)
+            row_layout.addLayout(details, 1)
+            row.adjustSize()
+            item.setSizeHint(QSize(0, max(110, row.sizeHint().height())))
+            self.results_list.setItemWidget(item, row)
+        self.results_empty_label.setVisible(
+            not summary.candidates
+            and summary.state
+            in {ScanState.COMPLETED, ScanState.COMPLETED_WITH_SKIPS}
+        )
         self.status_label.setText(
             self._final_scan_status(self._summary_text(summary), duration_ms, saved)
         )
@@ -1287,6 +1366,7 @@ class MainWindow(QMainWindow):
             )
             return
         if not isinstance(release, UpdateRelease):
+            self.status_label.setText("The update information could not be used.")
             _update_message(
                 self,
                 QMessageBox.Icon.Warning,
@@ -1295,6 +1375,10 @@ class MainWindow(QMainWindow):
             return
         installation = detect_appimage_installation(self._update_environment)
         if installation is None:
+            self.status_label.setText(
+                f"Image Filter {release.version} is available. Automatic installation "
+                "is only available from a writable AppImage."
+            )
             _update_message(
                 self,
                 QMessageBox.Icon.Information,
@@ -1319,6 +1403,9 @@ class MainWindow(QMainWindow):
         box.setDefaultButton(QMessageBox.StandardButton.No)
         answer = box.exec()
         if answer != QMessageBox.StandardButton.Yes:
+            self.status_label.setText(
+                f"Image Filter {release.version} was not downloaded."
+            )
             return
         self._update_installation = installation
         cancel_event = Event()
@@ -1347,6 +1434,7 @@ class MainWindow(QMainWindow):
     def _finish_update_download(self, download: Any) -> None:
         if not isinstance(download, VerifiedDownload) or self._update_installation is None:
             self._remove_verified_download(download)
+            self.status_label.setText("The downloaded update could not be used.")
             _update_message(
                 self, QMessageBox.Icon.Warning, "The downloaded update could not be used."
             )
@@ -1363,6 +1451,7 @@ class MainWindow(QMainWindow):
             self._remove_verified_download(download)
             self._verified_update = None
             self._update_installation = None
+            self.status_label.setText("The update was downloaded but not installed.")
             return
         installation = self._update_installation
         self.status_label.setText("Installing update...")
@@ -1376,6 +1465,7 @@ class MainWindow(QMainWindow):
         self._verified_update = None
         self._update_installation = None
         if not isinstance(result, InstallResult):
+            self.status_label.setText("The installed update could not be verified.")
             _update_message(
                 self, QMessageBox.Icon.Warning, "The installed update could not be verified."
             )
@@ -1436,6 +1526,7 @@ class MainWindow(QMainWindow):
         self._selected_folder = folder
         self.folder_label.setText(str(folder))
         self.results_list.clear()
+        self.results_empty_label.hide()
         self.status_label.setText("Folder ready. Select Scan Folder to begin.")
         self._update_controls()
 
@@ -1805,6 +1896,10 @@ class MainWindow(QMainWindow):
                 font-weight: 700;
                 padding: 9px 18px;
             }
+            QPushButton#secondaryButton:focus {
+                border-color: #132238;
+                background: #eef7f9;
+            }
             QPushButton#secondaryButton:disabled {
                 border-color: #aab7c0;
                 color: #8898a4;
@@ -1814,8 +1909,25 @@ class MainWindow(QMainWindow):
                 background: #ffffff;
                 border: 1px solid #c4d2dc;
                 border-radius: 4px;
-                outline: 0;
                 padding: 4px;
+            }
+            QListWidget#results:focus {
+                border-color: #136f8a;
+            }
+            QListWidget#results::indicator {
+                width: 0;
+                height: 0;
+            }
+            QLabel#candidatePath {
+                color: #132238;
+                font-weight: 700;
+            }
+            QLabel#candidateMeta {
+                color: #136f8a;
+                font-weight: 700;
+            }
+            QLabel#candidateReason {
+                color: #40566b;
             }
             QListWidget#results::item {
                 padding: 7px 8px;
