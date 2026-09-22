@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from pathlib import Path
+import ssl
+import sys
 from threading import Event
+import types
 
 import pytest
 
@@ -153,7 +157,143 @@ def test_metadata_connection_errors_are_redacted() -> None:
 
     with pytest.raises(UpdateTransportError) as caught:
         fetch_release_metadata(connection_factory=failing_factory)
+    assert str(caught.value) == "GitHub could not be reached"
     assert "secret machine detail" not in str(caught.value)
+
+
+def _install_fake_certifi(monkeypatch: pytest.MonkeyPatch, where) -> None:
+    fake_certifi = types.SimpleNamespace(where=where)
+    monkeypatch.setitem(sys.modules, "certifi", fake_certifi)
+    monkeypatch.setattr(update_transport_module, "certifi", fake_certifi, raising=False)
+
+
+def test_default_connection_factory_uses_bundled_verified_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+    fake_context = object()
+
+    class RecordingHTTPS:
+        def __init__(self, host, *, timeout=None, context=None):
+            calls.append({"host": host, "timeout": timeout, "context": context})
+
+    def fake_create_default_context(*, cafile=None, **kwargs):
+        calls.append({"create_context": True, "cafile": cafile, **kwargs})
+        return fake_context
+
+    _install_fake_certifi(monkeypatch, lambda: "/bundled/cacert.pem")
+    monkeypatch.setattr(
+        update_transport_module.http.client, "HTTPSConnection", RecordingHTTPS
+    )
+    monkeypatch.setattr("ssl.create_default_context", fake_create_default_context)
+
+    connection = update_transport_module._default_connection_factory(
+        "api.github.com", 15.0
+    )
+
+    assert len(calls) == 2
+    context_call, connect_call = calls
+    assert context_call["create_context"] is True
+    assert context_call["cafile"] == "/bundled/cacert.pem"
+    assert context_call.get("verify_mode") != ssl.CERT_NONE
+    assert context_call.get("check_hostname") is not False
+    assert connect_call == {
+        "host": "api.github.com",
+        "timeout": 15.0,
+        "context": fake_context,
+    }
+    assert isinstance(connection, RecordingHTTPS)
+
+
+def test_missing_ca_bundle_fails_closed_without_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    where_calls: list[str] = []
+    connect_calls: list[tuple] = []
+
+    def broken_where() -> str:
+        where_calls.append("called")
+        raise FileNotFoundError("/bundled/cacert.pem: missing CA bundle")
+
+    def recording_https(host, *, timeout=None, context=None):
+        connect_calls.append((host, timeout, context))
+        raise AssertionError("must not construct HTTPS connection")
+
+    _install_fake_certifi(monkeypatch, broken_where)
+    monkeypatch.setattr(
+        update_transport_module.http.client, "HTTPSConnection", recording_https
+    )
+
+    with pytest.raises(UpdateTransportError) as caught:
+        fetch_release_metadata()
+
+    assert str(caught.value) == "GitHub could not be reached"
+    assert "/bundled/cacert.pem" not in str(caught.value)
+    assert "missing CA bundle" not in str(caught.value)
+    assert where_calls == ["called"]
+    assert connect_calls == []
+
+
+class StageFailureResponse:
+    def __init__(self, stage: str) -> None:
+        self.status = 200
+        self.stage = stage
+
+    def getheader(self, name, default=None):
+        return {"Content-Length": "2"}.get(name, default)
+
+    def read(self, size: int = -1) -> bytes:
+        if self.stage == "read":
+            raise OSError("secret read detail")
+        return b"[]"
+
+
+class StageFailureConnection:
+    def __init__(self, stage: str, records: list[tuple]) -> None:
+        self.stage = stage
+        self.records = records
+
+    def request(self, method: str, path: str, *, headers: dict[str, str]) -> None:
+        if self.stage == "request":
+            raise OSError("secret request detail")
+        self.records.append(("request", method, path, headers))
+
+    def getresponse(self) -> StageFailureResponse:
+        if self.stage == "getresponse":
+            raise OSError("secret response detail")
+        return StageFailureResponse(self.stage)
+
+    def close(self) -> None:
+        self.records.append(("close",))
+
+
+@pytest.mark.parametrize("stage", ["request", "getresponse", "read"])
+def test_metadata_operation_failures_stay_sanitized(stage: str) -> None:
+    records: list[tuple] = []
+
+    def factory(host: str, timeout: float):
+        records.append(("connect", host, timeout))
+        return StageFailureConnection(stage, records)
+
+    with pytest.raises(UpdateTransportError) as caught:
+        fetch_release_metadata(connection_factory=factory)
+
+    assert str(caught.value) == "GitHub could not be reached"
+    assert "secret" not in str(caught.value)
+    assert records[0][0:2] == ("connect", "api.github.com")
+    assert ("close",) in records
+
+
+def test_metadata_and_download_use_same_default_connection_factory() -> None:
+    metadata_default = inspect.signature(fetch_release_metadata).parameters[
+        "connection_factory"
+    ].default
+    download_default = inspect.signature(download_appimage).parameters[
+        "connection_factory"
+    ].default
+
+    assert metadata_default is download_default
+    assert metadata_default is update_transport_module._default_connection_factory
 
 
 def test_download_streams_verifies_and_reports_monotonic_progress(tmp_path: Path) -> None:

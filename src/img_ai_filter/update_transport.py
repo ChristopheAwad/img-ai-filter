@@ -7,9 +7,12 @@ import hashlib
 import http.client
 import os
 from pathlib import Path
+import ssl
 import tempfile
 from typing import Callable
 from urllib.parse import urljoin, urlsplit
+
+import certifi
 
 from .update_release import MAX_APPIMAGE_BYTES, MAX_METADATA_BYTES, UpdateAsset
 
@@ -45,7 +48,8 @@ class VerifiedDownload:
 
 
 def _default_connection_factory(host: str, timeout: float) -> http.client.HTTPSConnection:
-    return http.client.HTTPSConnection(host, timeout=timeout)
+    context = ssl.create_default_context(cafile=certifi.where())
+    return http.client.HTTPSConnection(host, timeout=timeout, context=context)
 
 
 def _cancelled(cancel_event: object | None) -> bool:

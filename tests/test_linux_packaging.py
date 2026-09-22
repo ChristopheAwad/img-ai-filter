@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import configparser
 from pathlib import Path
+import tomllib
 import xml.etree.ElementTree as ET
 
+from packaging.requirements import Requirement
+from packaging.version import Version
 import pytest
 
 from img_ai_filter.packaging import (
@@ -18,8 +21,30 @@ ROOT = Path(__file__).resolve().parents[1]
 LINUX_DIR = ROOT / "packaging" / "linux"
 
 
+def _certifi_requirement() -> Requirement:
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = [Requirement(item) for item in data["project"]["dependencies"]]
+    matches = [requirement for requirement in requirements if requirement.name == "certifi"]
+    if len(matches) != 1:
+        raise AssertionError("pyproject must declare exactly one certifi dependency")
+    return matches[0]
+
+
+def _certifi_pin() -> tuple[str, str]:
+    for line in (LINUX_DIR / "runtime-constraints.txt").read_text(
+        encoding="utf-8"
+    ).splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("certifi"):
+            name, separator, version = stripped.partition("==")
+            if name != "certifi" or not separator or not version or "==" in version:
+                raise AssertionError("certifi pin must use one exact == version")
+            return name, version
+    raise AssertionError("runtime-constraints must pin certifi exactly")
+
+
 def test_project_version_comes_from_pyproject() -> None:
-    assert project_version(ROOT / "pyproject.toml") == "0.2.0"
+    assert project_version(ROOT / "pyproject.toml") == "0.2.1"
 
 
 @pytest.mark.parametrize(
@@ -132,3 +157,42 @@ def test_entrypoint_supports_bounded_packaged_smoke_test() -> None:
     assert "--smoke-test" in contents
     assert "app.processEvents()" in contents
     assert "window.close()" in contents
+
+
+def test_pyproject_declares_bounded_certifi_runtime_dependency() -> None:
+    requirement = _certifi_requirement()
+
+    assert list(requirement.specifier), (
+        "certifi runtime dependency must use a bounded version range"
+    )
+
+
+def test_runtime_constraints_pin_certifi_exactly() -> None:
+    name, version = _certifi_pin()
+
+    assert name == "certifi"
+    assert version
+
+
+def test_certifi_pin_satisfies_pyproject_requirement() -> None:
+    requirement = _certifi_requirement()
+    _, version = _certifi_pin()
+
+    assert Version(version) in requirement.specifier
+
+
+def test_linux_spec_collects_certifi_data_files() -> None:
+    spec = (LINUX_DIR / "image-filter.spec").read_text(encoding="utf-8")
+
+    assert 'collect_data_files("certifi")' in spec or (
+        "collect_data_files('certifi')" in spec
+    )
+
+
+def test_third_party_notices_document_certifi_mozilla_license() -> None:
+    notices = (LINUX_DIR / "THIRD_PARTY_NOTICES.txt").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "certifi" in notices
+    assert "mozilla public license" in notices

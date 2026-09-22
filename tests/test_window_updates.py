@@ -18,7 +18,7 @@ from img_ai_filter.update_install import (
 )
 from img_ai_filter.update_release import UpdateAsset, UpdateRelease
 from img_ai_filter.update_transport import VerifiedDownload
-from img_ai_filter.update_transport import UpdateCancelled
+from img_ai_filter.update_transport import UpdateCancelled, UpdateTransportError
 from img_ai_filter.window import CandidateSelectionSettingsDialog, MainWindow
 
 
@@ -294,6 +294,40 @@ def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
 
     assert "private exception detail" not in boxes[0].text()
     assert boxes[0].textFormat() == Qt.TextFormat.PlainText
+    assert window.check_updates_button.isEnabled()
+
+
+def test_transport_error_is_shown_safely_and_allows_retry(qtbot, monkeypatch) -> None:
+    boxes: list[QMessageBox] = []
+
+    def exec_box(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
+
+    def fail(*args):
+        raise UpdateTransportError("GitHub could not be reached")
+
+    window = MainWindow(
+        settings_store=MemoryStore(), application_version="0.1.0", check_update=fail
+    )
+    qtbot.addWidget(window)
+    window.check_updates_button.click()
+    qtbot.waitUntil(lambda: bool(boxes))
+
+    message = "GitHub could not be reached"
+    assert window.status_label.text() == message
+    assert boxes[0].windowTitle() == "Updates"
+    assert boxes[0].text() == message
+    assert boxes[0].textFormat() == Qt.TextFormat.PlainText
+    assert window.check_updates_button.isEnabled()
+
+    boxes.clear()
+    window.check_updates_button.click()
+    qtbot.waitUntil(lambda: bool(boxes))
+
+    assert boxes[0].text() == message
     assert window.check_updates_button.isEnabled()
 
 

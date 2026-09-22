@@ -6,6 +6,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <launchable type="desktop-id">io.github.img_ai_filter.ImageFilter.desktop</launchable>
   <releases>
+    <release version="0.2.1" date="2026-09-22"/>
     <release version="0.2.0" date="2026-09-22"/>
   </releases>
 </component>

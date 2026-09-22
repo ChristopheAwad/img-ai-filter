@@ -15,6 +15,8 @@ contributors. Refer to the package projects for complete license text and terms.
   https://github.com/jaraco/keyring/blob/main/LICENSE
 - packaging 26.3: Apache License 2.0 or BSD 2-Clause License.
   https://github.com/pypa/packaging/blob/main/LICENSE
+- certifi provides Mozilla CA certificates under the Mozilla Public License 2.0.
+  https://github.com/certifi/python-certifi/blob/master/LICENSE.md
 - PyInstaller 6.10.0 bootloader: GPLv2 with the PyInstaller bootloader exception.
   https://pyinstaller.org/en/stable/license.html
 
