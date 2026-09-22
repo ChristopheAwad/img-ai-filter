@@ -1295,13 +1295,16 @@ class MainWindow(QMainWindow):
             f"{release.notes}\n\n"
             "Checking and downloading contacts GitHub and shares your IP address with GitHub. Download this update?"
         )
-        answer = QMessageBox.question(
-            self,
-            "Update available",
-            text,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Update available")
+        box.setText(text)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        answer = box.exec()
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._update_installation = installation

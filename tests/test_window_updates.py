@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 import time
 
 from packaging.version import Version
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 import img_ai_filter.window as window_module
@@ -153,6 +155,10 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
         questions.append(title)
         return QMessageBox.StandardButton.Yes
 
+    def exec_dialog(box):
+        questions.append(box.windowTitle())
+        return QMessageBox.StandardButton.Yes
+
     def download(asset, directory, cancel_event, progress):
         stages.append("download")
         path = directory / ".verified.download"
@@ -172,6 +178,7 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
         return True
 
     monkeypatch.setattr(QMessageBox, "question", question)
+    monkeypatch.setattr(QMessageBox, "exec", exec_dialog)
     window = MainWindow(
         settings_store=MemoryStore(),
         application_version="0.1.0",
@@ -189,6 +196,42 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
 
     assert stages == ["download", "install", f"restart:{current}", "close"]
     assert questions == ["Update available", "Install update?", "Restart Image Filter?"]
+
+
+def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -> None:
+    current = tmp_path / "ImageFilter.AppImage"
+    current.write_bytes(b"old appimage")
+    current.chmod(0o755)
+    release = replace(
+        _release(),
+        notes="<b>bold</b><a href='https://invalid.example/'>link</a>",
+    )
+    boxes: list[QMessageBox] = []
+
+    def exec_dialog(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_dialog)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_environment={"APPIMAGE": str(current)},
+        check_update=lambda *args: release,
+    )
+    qtbot.addWidget(window)
+
+    window.check_updates_button.click()
+    qtbot.waitUntil(lambda: bool(boxes))
+
+    assert boxes[0].windowTitle() == "Update available"
+    assert boxes[0].textFormat() == Qt.TextFormat.PlainText
+    assert "<b>bold</b>" in boxes[0].text()
 
 
 def test_check_failure_is_safe_and_retry_is_enabled(qtbot, monkeypatch) -> None:
