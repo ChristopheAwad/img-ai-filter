@@ -722,6 +722,7 @@ class MainWindow(QMainWindow):
         self.scan_button.clicked.connect(self._request_scan)
         self.cancel_button.clicked.connect(self._cancel_operation)
         self.results_list.itemChanged.connect(self._candidate_item_changed)
+        self.results_list.itemSelectionChanged.connect(self._update_candidate_selection_colors)
         self._update_controls()
 
     @staticmethod
@@ -1828,6 +1829,8 @@ class MainWindow(QMainWindow):
     def eventFilter(self, watched: Any, event: QEvent) -> bool:
         if watched is QApplication.instance() and event.type() == QEvent.Type.ApplicationFontChange:
             QTimer.singleShot(0, self._refresh_font_layout)
+        elif watched is QApplication.instance() and event.type() == QEvent.Type.ApplicationPaletteChange:
+            QTimer.singleShot(0, self._refresh_palette)
         elif (hasattr(self, "results_list")
               and watched is self.results_list.viewport()
               and event.type() == QEvent.Type.Resize):
@@ -1857,12 +1860,45 @@ class MainWindow(QMainWindow):
                        self.scan_button, self.cancel_button,
                        self.activity_history_button, self.select_quarantine_button,
                        self.move_quarantine_button, self.selection_button):
+            button.setFont(QApplication.font())
             button.setMinimumSize(button.minimumSizeHint())
             button.setMinimumHeight(button.sizeHint().height() + 2)
             button.updateGeometry()
         self.content_scroll.widget().layout().activate()
         self.content_scroll.widget().adjustSize()
         self._refresh_candidate_rows()
+
+    def _refresh_palette(self) -> None:
+        if self._closing:
+            return
+        # Qt keeps the old palette for controls with local focus stylesheets.
+        palette = QApplication.palette()
+        self.results_list.setPalette(palette)
+        for button in (self.cancel_button, self.activity_history_button,
+                       self.select_quarantine_button, self.selection_button):
+            button.setPalette(palette)
+        self._update_candidate_selection_colors()
+
+    def _update_candidate_selection_colors(self) -> None:
+        for index in range(self.results_list.count()):
+            item = self.results_list.item(index)
+            row = self.results_list.itemWidget(item)
+            if row is None:
+                continue
+            for name in ("candidatePath", "candidateMeta", "candidateReason"):
+                label = row.findChild(QLabel, name)
+                if label is None:
+                    continue
+                if item.isSelected():
+                    palette = QPalette(QApplication.palette())
+                    for group in (QPalette.ColorGroup.Active,
+                                  QPalette.ColorGroup.Inactive,
+                                  QPalette.ColorGroup.Disabled):
+                        palette.setColor(group, QPalette.ColorRole.WindowText,
+                                         palette.color(group, QPalette.ColorRole.HighlightedText))
+                    label.setPalette(palette)
+                else:
+                    label.setPalette(QPalette())
 
     def _refresh_heading_fonts(self) -> None:
         heading_font = QApplication.font()

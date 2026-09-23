@@ -3,7 +3,7 @@
 ## Current state
 
 Implemented after failing palette, large-font, and candidate-resize tests. The
-focused GUI tests and complete offline suite pass (1100 passed, 4 skipped).
+focused GUI tests and complete offline suite pass (1101 passed, 4 skipped).
 Desktop light/dark/high-contrast and large-text behavior was confirmed by the
 user. The user explicitly requested a pull request.
 

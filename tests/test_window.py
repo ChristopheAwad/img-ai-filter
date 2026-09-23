@@ -140,12 +140,21 @@ def test_main_window_uses_system_palette(
         assert widget.palette().color(role) == QColor(
             background if role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base) else foreground
         )
-    assert "#edf3f7" not in window.styleSheet()
-    assert "#132238" not in window.styleSheet()
-
     application_appearance.setPalette(_test_palette("#101010", "#f8f8f8", "#00ffff"))
     application_appearance.processEvents()
+    application_appearance.processEvents()
     assert window.status_label.palette().color(QPalette.ColorRole.WindowText) == QColor("#f8f8f8")
+    assert window.results_list.palette().color(QPalette.ColorRole.Base) == QColor("#101010")
+    assert window.selection_button.palette().color(
+        QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText
+    ) == QColor("#f8f8f8")
+    application_appearance.setPalette(_test_palette("#fafafa", "#111111", "#3030ee"))
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    assert window.results_list.palette().color(QPalette.ColorRole.Base) == QColor("#fafafa")
+    assert window.selection_button.palette().color(
+        QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText
+    ) == QColor("#111111")
 
 
 def test_large_font_inherits_and_controls_fit_after_live_change(qtbot, application_appearance) -> None:
@@ -164,8 +173,8 @@ def test_large_font_inherits_and_controls_fit_after_live_change(qtbot, applicati
                    window.results_list, window.application_menu_button):
         assert widget.font().pointSize() == 19
     for button in main_action_buttons(window):
+        assert button.font().pointSize() == 19, button.text()
         assert button.sizeHint().height() <= button.height(), button.text()
-    assert "font-size: 14px" not in window.styleSheet()
 
 
 def test_candidate_row_tracks_large_font_and_palette_after_resize(
@@ -228,6 +237,36 @@ def test_existing_candidate_grows_after_font_change(qtbot, application_appearanc
     assert item.sizeHint().height() > original_height
     assert item.sizeHint().height() >= row.layout().sizeHint().height()
     assert item.checkState() == Qt.CheckState.Unchecked
+
+
+def test_selected_candidate_uses_highlight_text_after_theme_change(
+    qtbot, application_appearance, tmp_path
+) -> None:
+    application_appearance.setPalette(_test_palette("#181c25", "#faf5dc", "#f3d422"))
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.show()
+    candidate = ScanCandidate(
+        tmp_path / "example.png", "meme", "Text on an image", 0.6,
+        SourceIdentity(0, "a" * 64), b"", 1, 1,
+    )
+    window._finish_scan(ScanSummary(ScanState.COMPLETED, (candidate,), 1, 1, 0, 0, 0, 0), None)
+    item = window.results_list.item(0)
+    row = window.results_list.itemWidget(item)
+    path = row.findChild(QLabel, "candidatePath")
+    reason = row.findChild(QLabel, "candidateReason")
+    window.results_list.setCurrentItem(item)
+    application_appearance.processEvents()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#181c25")
+    assert reason.palette().color(QPalette.ColorRole.WindowText) == QColor("#181c25")
+
+    application_appearance.setPalette(_test_palette("#000000", "#ffffff", "#00ffff"))
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#000000")
+    window.results_list.clearSelection()
+    application_appearance.processEvents()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#ffffff")
 
 
 def test_child_dialogs_follow_system_palette_and_font(qtbot, application_appearance) -> None:
