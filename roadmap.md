@@ -488,12 +488,47 @@ Implementation order:
 8. Run focused GUI tests and the complete network-blocked suite.
 9. Complete manual desktop verification at default and minimum window sizes before any Git operation.
 
+### F-013: System Theme and Font Scaling
+
+- **Status:** in progress
+- **Tier:** Tier 2, accessibility and review usability
+- **Effort:** Medium because a main-window stylesheet currently fixes colors and pixel font sizes across the widget tree, including candidate rows, focus states, and disabled controls
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`
+- **Likely implementation files:** `src/img_ai_filter/window.py`, `tests/test_window.py`, `tests/test_window_server.py`, and GUI documentation
+- **Depends on:** shipped F-012 candidate review UI reliability and existing Qt palette/font behavior
+- **Blocks:** the bounded accessibility and layout pass before public release readiness
+
+Let the operating system's light, dark, and high-contrast palettes and application font size drive the main window and its dialogs. Keep candidate paths, reasons, confidence, check states, selection, and keyboard focus legible. Do not add a custom theme switch or change the scan and quarantine rules.
+
+Dependency graph:
+
+```text
+F-012 structured candidate rows + focus states
+                    |
+                    v
+F-013 palette, font, boundary, and regression tests
+                    |
+                    v
+F-013 palette-aware styling + scalable text/layout
+                    |
+                    v
+Desktop light/dark/high-contrast and large-text verification
+```
+
+Implementation order:
+
+1. Approve the test-first handoff in `feature.md`.
+2. Record the complete network-blocked test baseline.
+3. Write failing palette, high-contrast, large-font, focus, candidate, dialog, and layout tests with deterministic Qt fixtures.
+4. Remove the global fixed-color and pixel-font rules; derive any retained accents and focus indicators from the active Qt palette and font.
+5. Update candidate row sizing and fixed controls only where the new tests show clipping; keep the 96-pixel preview bound.
+6. Run focused GUI tests, the complete offline suite, and manual desktop checks before proposing Git operations.
+
 ## UI Backlog
 
-These suggestions came from the 2026-09-22 UI audit. They are intentionally outside F-012 and need separate prioritization before implementation.
+These suggestions came from the 2026-09-22 UI audit. They are outside F-012 and F-013 and need separate prioritization before implementation.
 
 - Make changing scan, quarantine, and update statuses more useful to assistive technology. Research the smallest reliable PySide6 announcement mechanism before choosing an implementation.
-- Respect operating-system themes, high-contrast settings, and font scaling instead of applying fixed colors and pixel font sizes to the complete widget tree.
 - Replace the visible `...` application-menu label with a clearer platform-safe menu treatment while retaining its accessible name and fixed-header placement.
 - Give settings-save failures a distinct error treatment and move keyboard or assistive-technology attention to the error.
 - Adapt horizontal controls at narrow widths instead of relying only on vertical scrolling and a 560-pixel minimum width.
