@@ -653,7 +653,7 @@ class MainWindow(QMainWindow):
         self.results_list.setSizePolicy(results_policy)
 
         self.results_empty_label = QLabel(
-            "No likely screenshots or memes were found."
+            "No likely screenshots, memes, or paper documents were found."
         )
         self.results_empty_label.setObjectName("status")
         self.results_empty_label.setWordWrap(True)
@@ -1507,6 +1507,17 @@ class MainWindow(QMainWindow):
             word = singular if value == 1 else (plural or singular + "s")
             return f"{value} {word}"
 
+        breakdown = summary.failure_breakdown
+        labels = (
+            ("preparation", breakdown.preparation),
+            ("timeout", breakdown.timeout),
+            ("connection", breakdown.connection),
+            ("server response", breakdown.server_response),
+            ("invalid response", breakdown.invalid_response),
+            ("other", breakdown.other),
+        )
+        detail = ", ".join(f"{amount} {label}" for label, amount in labels if amount)
+        detail_text = f" (failed: {detail})" if detail else ""
         return (
             f"{prefixes[summary.state]}: "
             f"{count(summary.discovered, 'discovered', 'discovered')}, "
@@ -1515,7 +1526,8 @@ class MainWindow(QMainWindow):
             f"{count(summary.ordinary, 'ordinary', 'ordinary')}, "
             f"{count(summary.uncertain, 'uncertain', 'uncertain')}, "
             f"{count(summary.failed, 'failed', 'failed')}, "
-            f"{count(summary.skipped_directories, 'unreadable folder')}."
+            f"{count(summary.skipped_directories, 'unreadable folder')}"
+            f"{detail_text}."
         )
 
     def _choose_folder(self) -> None:

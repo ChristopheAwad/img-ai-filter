@@ -153,6 +153,21 @@ def test_redirect_is_returned_without_following_it() -> None:
     assert len(FakeConnection.instances) == 1
 
 
+def test_timeout_is_typed_and_redacted_without_retry(monkeypatch) -> None:
+    def time_out(self):
+        raise TimeoutError("private network detail")
+
+    monkeypatch.setattr(FakeConnection, "getresponse", time_out)
+    with pytest.raises(HttpTransportError) as raised:
+        StandardHttpTransport().request(
+            "POST", "http://127.0.0.1:5001/v1/chat/completions",
+            connect_timeout=1, read_timeout=2, max_response_bytes=100,
+        )
+    assert raised.value.kind == "timeout"
+    assert "private network detail" not in str(raised.value)
+    assert len(FakeConnection.instances) == 1
+
+
 def test_rejects_response_one_byte_over_limit_and_closes_resources() -> None:
     FakeConnection.next_response = FakeResponse(b"123456")
 

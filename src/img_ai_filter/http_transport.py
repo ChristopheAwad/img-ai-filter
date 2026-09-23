@@ -13,6 +13,10 @@ from .vision_connection import TransportResponse
 class HttpTransportError(RuntimeError):
     """Raised when an HTTP request cannot be completed safely."""
 
+    def __init__(self, message: str, *, kind: str = "connection") -> None:
+        super().__init__(message)
+        self.kind = kind
+
 
 class StandardHttpTransport:
     """Reusable HTTP transport with bounded responses and active cancellation."""
@@ -83,15 +87,16 @@ class StandardHttpTransport:
             response = connection.getresponse()
             response_body = response.read(max_response_bytes + 1)
             if len(response_body) > max_response_bytes:
-                raise HttpTransportError("The HTTP response is too large")
+                raise HttpTransportError("The HTTP response is too large", kind="server_response")
             response_headers = {
                 name.lower(): value for name, value in response.getheaders()
             }
             return TransportResponse(response.status, response_headers, response_body)
         except HttpTransportError:
             raise
-        except Exception:
-            raise HttpTransportError("The HTTP request failed") from None
+        except Exception as error:
+            kind = "timeout" if isinstance(error, TimeoutError) else "connection"
+            raise HttpTransportError("The HTTP request failed", kind=kind) from None
         finally:
             with self._lock:
                 if self._active_connection is connection:

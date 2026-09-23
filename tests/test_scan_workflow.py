@@ -136,6 +136,7 @@ def test_mixed_scan_is_sequential_ordered_and_counted() -> None:
         "reaction_image",
         "comic",
         "image_macro",
+        "paper_document",
     ],
 )
 def test_each_candidate_category_is_returned_unchecked(category: str) -> None:
@@ -188,6 +189,45 @@ def test_all_ordinary_and_all_uncertain_are_successful_without_rows() -> None:
     assert uncertain.state is ScanState.COMPLETED
     assert uncertain.uncertain == 2
     assert uncertain.candidates == ()
+
+
+def test_paper_document_is_a_candidate_even_below_auto_selection_threshold() -> None:
+    path = Path("notes.jpg")
+    summary, _, _ = _run((path,), {path.name: _decision("paper_document", 0.32)})
+    assert summary.candidate_count == 1
+    assert summary.candidates[0].path == path
+    assert summary.candidates[0].confidence == 0.32
+    assert summary.ordinary == 0
+
+
+def test_failures_have_safe_aggregate_kinds_and_continue() -> None:
+    paths = tuple(Path(f"{name}.png") for name in ("bad", "timeout", "valid"))
+    summary, _, classified = _run(paths, {
+        "bad.png": ImagePayloadError("private input"),
+        "timeout.png": VisionClientError("private endpoint", kind="timeout"),
+        "valid.png": _decision("ordinary"),
+    })
+    assert classified == ["timeout.png", "valid.png"]
+    assert summary.failed == 2
+    assert summary.failure_breakdown.preparation == 1
+    assert summary.failure_breakdown.timeout == 1
+    assert sum(summary.failure_breakdown.counts()) == summary.failed
+
+
+def test_all_failure_kinds_count_once_without_storing_details() -> None:
+    outcomes = {
+        "a.png": ImagePayloadError("private file"),
+        "b.png": VisionClientError("private timeout", kind="timeout"),
+        "c.png": VisionClientError("private host", kind="connection"),
+        "d.png": VisionClientError("private reply", kind="server_response"),
+        "e.png": VisionClientError("private text", kind="invalid_response"),
+        "f.png": VisionClientError("private other"),
+    }
+    summary, _, _ = _run(tuple(Path(name) for name in outcomes), outcomes)
+    assert summary.state is ScanState.FAILED
+    assert summary.failure_breakdown.counts() == (1, 1, 1, 1, 1, 1)
+    assert summary.failed == sum(summary.failure_breakdown.counts())
+    assert "private" not in repr(summary)
 
 
 @pytest.mark.parametrize("failure_index", [0, 1, 2])

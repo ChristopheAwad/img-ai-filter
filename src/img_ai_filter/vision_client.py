@@ -8,6 +8,7 @@ import json
 from typing import Protocol
 
 from .endpoint import VisionEndpointConfig
+from .http_transport import HttpTransportError
 from .vision_connection import TransportResponse
 from .vision_response import VISION_CATEGORIES, VisionDecision, VisionResponseError, parse_vision_content
 
@@ -24,14 +25,21 @@ _SYSTEM_PROMPT = (
     "Classify the image by visual structure only. Do not transcribe or quote any "
     "recognized text. Give a short visual-only reason without private details. "
     "Choose exactly one category: ordinary, screenshot, captioned_meme, "
-    "reaction_image, comic, image_macro, or uncertain. Use uncertain when the visual "
-    "evidence is insufficient. Return only the requested JSON object."
+    "reaction_image, comic, image_macro, paper_document, or uncertain. Choose "
+    "paper_document when a camera photo mainly shows a notebook page, handwritten "
+    "notes, or a printed paper document. Incidental background paper in an ordinary "
+    "photo is ordinary; a digital interface capture is a screenshot. Use uncertain "
+    "when the visual evidence is insufficient. Return only the requested JSON object."
 )
 _USER_INSTRUCTION = "Classify this image using the required categories and JSON schema."
 
 
 class VisionClientError(RuntimeError):
     """Raised when one image cannot be safely classified."""
+
+    def __init__(self, message: str, *, kind: str = "other") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class VisionCancelled(VisionClientError):
@@ -94,31 +102,31 @@ def _request_body(model: str, data_url: str) -> bytes:
 
 def _response_content(response: TransportResponse) -> str:
     if response.status != 200:
-        raise VisionClientError("The KoboldCpp image request failed")
+        raise VisionClientError("The KoboldCpp image request failed", kind="server_response")
     if len(response.body) > VISION_RESPONSE_MAX_BYTES:
-        raise VisionClientError("The KoboldCpp response is too large")
+        raise VisionClientError("The KoboldCpp response is too large", kind="server_response")
     try:
         payload = json.loads(response.body)
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        raise VisionClientError(_INVALID_RESPONSE) from None
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response") from None
     if not isinstance(payload, dict):
-        raise VisionClientError(_INVALID_RESPONSE)
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response")
     choices = payload.get("choices")
     if not isinstance(choices, list) or len(choices) != 1:
-        raise VisionClientError(_INVALID_RESPONSE)
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response")
     choice = choices[0]
     if not isinstance(choice, dict) or choice.get("refusal") not in (None, ""):
-        raise VisionClientError(_INVALID_RESPONSE)
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response")
     message = choice.get("message")
     if (
         not isinstance(message, dict)
         or message.get("role") != "assistant"
         or message.get("refusal") not in (None, "")
     ):
-        raise VisionClientError(_INVALID_RESPONSE)
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response")
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise VisionClientError(_INVALID_RESPONSE)
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response")
     return content
 
 
@@ -149,10 +157,16 @@ def classify_image(
         )
     except VisionCancelled:
         raise
-    except Exception:
+    except Exception as error:
         if cancel_event is not None and getattr(cancel_event, "is_set")():
             raise VisionCancelled("The image analysis was cancelled") from None
-        raise VisionClientError(_TRANSPORT_ERROR) from None
+        if isinstance(error, HttpTransportError):
+            kind = error.kind
+        elif isinstance(error, TimeoutError):
+            kind = "timeout"
+        else:
+            kind = "connection"
+        raise VisionClientError(_TRANSPORT_ERROR, kind=kind) from None
 
     if cancel_event is not None and getattr(cancel_event, "is_set")():
         raise VisionCancelled("The image analysis was cancelled")
@@ -160,4 +174,4 @@ def classify_image(
     try:
         return parse_vision_content(content)
     except VisionResponseError:
-        raise VisionClientError(_INVALID_RESPONSE) from None
+        raise VisionClientError(_INVALID_RESPONSE, kind="invalid_response") from None

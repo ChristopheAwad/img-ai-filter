@@ -7,4 +7,5 @@ memes/captioned.png,captioned_meme,holdout,example-local-user,local-only
 memes/reaction.png,reaction_image,holdout,example-local-user,local-only
 memes/comic.png,comic,tuning,example-local-user,local-only
 memes/image-macro.png,image_macro,holdout,example-local-user,local-only
+documents/notebook-page.png,paper_document,tuning,example-local-user,local-only
 uncertain/ambiguous.png,uncertain,tuning,example-local-user,local-only

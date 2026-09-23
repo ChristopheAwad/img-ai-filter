@@ -73,6 +73,7 @@ def test_loads_valid_row_for_every_label_and_split(tmp_path: Path) -> None:
         "reaction_image",
         "comic",
         "image_macro",
+        "paper_document",
         "uncertain",
     ]
     names = [f"file-{index}.png" for index in range(len(labels))]
@@ -87,7 +88,7 @@ def test_loads_valid_row_for_every_label_and_split(tmp_path: Path) -> None:
     entries = load_manifest(tmp_path, manifest)
 
     assert [entry.label for entry in entries] == labels
-    assert [entry.split for entry in entries] == ["tuning"] * 3 + ["holdout"] + ["tuning"] * 3
+    assert [entry.split for entry in entries] == ["tuning"] * 3 + ["holdout"] + ["tuning"] * 4
 
 
 def test_accepts_spaces_and_unicode_filename_without_changing_path(

@@ -19,6 +19,7 @@ LABELS = [
     "reaction_image",
     "comic",
     "image_macro",
+    "paper_document",
     "uncertain",
 ]
 

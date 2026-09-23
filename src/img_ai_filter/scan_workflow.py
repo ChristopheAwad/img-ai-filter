@@ -34,6 +34,28 @@ class ScanCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class ScanFailureBreakdown:
+    """Safe aggregate failure counts; no image paths or server output."""
+
+    preparation: int = 0
+    timeout: int = 0
+    connection: int = 0
+    server_response: int = 0
+    invalid_response: int = 0
+    other: int = 0
+
+    def counts(self) -> tuple[int, ...]:
+        return (
+            self.preparation,
+            self.timeout,
+            self.connection,
+            self.server_response,
+            self.invalid_response,
+            self.other,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ScanSummary:
     state: ScanState
     candidates: tuple[ScanCandidate, ...]
@@ -43,6 +65,7 @@ class ScanSummary:
     uncertain: int
     failed: int
     skipped_directories: int
+    failure_breakdown: ScanFailureBreakdown = field(default_factory=ScanFailureBreakdown)
 
     @property
     def candidate_count(self) -> int:
@@ -56,6 +79,7 @@ _CANDIDATE_CATEGORIES = frozenset(
         "reaction_image",
         "comic",
         "image_macro",
+        "paper_document",
     }
 )
 
@@ -85,10 +109,12 @@ def run_server_scan(
             uncertain,
             failed,
             skipped_count,
+            ScanFailureBreakdown(**failure_counts),
         )
 
     candidates: list[ScanCandidate] = []
     discovered = analyzed = ordinary = uncertain = failed = skipped_count = 0
+    failure_counts = {key: 0 for key in ScanFailureBreakdown.__dataclass_fields__}
     if cancelled():
         return summary(ScanState.CANCELLED)
 
@@ -112,8 +138,10 @@ def run_server_scan(
             )
         except VisionCancelled:
             return summary(ScanState.CANCELLED)
-        except (ImagePayloadError, VisionClientError):
+        except (ImagePayloadError, VisionClientError) as error:
             failed += 1
+            kind = "preparation" if isinstance(error, ImagePayloadError) else error.kind
+            failure_counts[kind if kind in failure_counts else "other"] += 1
         else:
             analyzed += 1
             if decision.category in _CANDIDATE_CATEGORIES:

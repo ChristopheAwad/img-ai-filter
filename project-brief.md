@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A privacy-conscious desktop app that finds screenshots and memes in user-selected image folders. With explicit consent, every supported image is sent to a user-managed KoboldCpp vision server on loopback or the private local network. Users review candidates with compact previews and may move the checked ones into a chosen quarantine folder.
+A privacy-conscious desktop app that finds screenshots, memes, and photographed paper documents in user-selected image folders. With explicit consent, every supported image is sent to a user-managed KoboldCpp vision server on loopback or the private local network. Users review candidates with compact previews and may move the checked ones into a chosen quarantine folder.
 
 ## Core Workflow
 
@@ -11,9 +11,9 @@ A privacy-conscious desktop app that finds screenshots and memes in user-selecte
 3. The application enables **Scan Folder** after a valid folder is selected and the server configuration is ready.
 4. Before every scan, the application names the destination and warns that every supported image will be sent to the KoboldCpp server, including that plain HTTP is unencrypted when selected.
 5. After consent, the application analyzes images sequentially through the OpenAI-compatible Chat Completions endpoint.
-6. The application shows only images flagged as likely screenshots, memes, or related trash candidates. Ordinary photos do not appear in the results.
+6. The application shows only images flagged as likely screenshots, memes, photographed notebook pages or paper documents, or related review candidates. Ordinary photos with incidental background paper do not appear in the results.
 7. Candidates at or above the saved automatic-selection confidence threshold start checked; lower-confidence candidates start unchecked. The default is 90%, and model-reported confidence is not a calibrated probability.
-8. If analysis fails or remains uncertain, the image is omitted and included in visible uncertain or failed-analysis counts.
+8. If analysis fails or remains uncertain, the image is omitted and included in visible uncertain or failed-analysis counts. Current scan status breaks failed analyses into safe aggregate causes without storing image-level failure details in history.
 9. Each displayed result explains its source path, flagging reason, and confidence, and shows a compact in-memory preview.
 10. The user reviews all candidates, can select or clear all candidates, adjusts individual checks, and reads each exact source and destination before any quarantine move starts.
 11. During each accepted scan, the application shows elapsed time. It adds final duration to scan and confirmed quarantine results and saves bounded local activity history.
@@ -33,7 +33,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Keep folder selection separate from scanning. Never start a scan only because a folder was selected.
 - Recursively scan selected folders without following symbolic links.
 - Support PNG, JPEG, WebP, BMP, and TIFF initially.
-- Recognize screenshots, captioned memes, reaction images, comics, and image macros.
+- Recognize screenshots, captioned memes, reaction images, comics, image macros, and camera photos whose main subject is handwritten or printed notebook pages or paper documents.
 - Exclude ordinary photos from scan results.
 - Show a reason and confidence for every displayed candidate.
 - Default automatic selection to model-reported confidence of 90% or higher.
