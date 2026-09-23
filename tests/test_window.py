@@ -239,6 +239,51 @@ def test_existing_candidate_grows_after_font_change(qtbot, application_appearanc
     assert item.checkState() == Qt.CheckState.Unchecked
 
 
+def test_many_candidate_rows_refresh_once_per_font_change(
+    qtbot, application_appearance, monkeypatch, tmp_path
+) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+    candidates = tuple(
+        ScanCandidate(
+            tmp_path / f"candidate-{index}.png", "meme", "A caption in an image.",
+            0.6, SourceIdentity(0, "a" * 64), b"", 1, 1,
+        )
+        for index in range(20)
+    )
+    window._finish_scan(ScanSummary(ScanState.COMPLETED, candidates, 20, 20, 0, 0, 0, 0), None)
+    application_appearance.processEvents()
+
+    calls = {"font": 0, "rows": 0}
+    original_font_refresh = window._refresh_font_layout
+    original_row_refresh = window._refresh_candidate_rows
+
+    def refresh_font() -> None:
+        calls["font"] += 1
+        original_font_refresh()
+
+    def refresh_rows() -> None:
+        calls["rows"] += 1
+        original_row_refresh()
+
+    monkeypatch.setattr(window, "_refresh_font_layout", refresh_font)
+    monkeypatch.setattr(window, "_refresh_candidate_rows", refresh_rows)
+    font = QFont(application_appearance.font())
+    font.setPointSize(19)
+    application_appearance.setFont(font)
+    for _ in range(4):
+        application_appearance.processEvents()
+
+    assert calls["font"] <= 3
+    assert calls["rows"] <= 8
+    assert window.results_list.item(19).data(Qt.ItemDataRole.UserRole) is candidates[19]
+    assert window.results_list.itemWidget(window.results_list.item(19)).findChild(
+        QLabel, "candidateReason"
+    ).font().pointSize() == 19
+
+
 def test_selected_candidate_uses_highlight_text_after_theme_change(
     qtbot, application_appearance, tmp_path
 ) -> None:

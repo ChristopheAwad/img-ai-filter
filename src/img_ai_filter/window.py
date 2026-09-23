@@ -431,6 +431,7 @@ class MainWindow(QMainWindow):
         self._operation_error: Exception | None = None
         self._generation = 0
         self._closing = False
+        self._candidate_row_refresh_pending = False
         self._scan_started_monotonic: float | None = None
         self._scan_started_at_utc: str | None = None
         self._scan_source_folder: str | None = None
@@ -713,7 +714,6 @@ class MainWindow(QMainWindow):
             self.selection_button,
         ):
             button.setMinimumSize(button.minimumSizeHint())
-            button.installEventFilter(self)
         self.results_list.setMinimumHeight(
             self.results_list.minimumSizeHint().height()
         )
@@ -1141,8 +1141,6 @@ class MainWindow(QMainWindow):
             reason_label = QLabel(candidate.reason)
             reason_label.setObjectName("candidateReason")
             reason_label.setWordWrap(True)
-            for label in (path_label, meta_label, reason_label):
-                label.installEventFilter(self)
             details.addWidget(path_label)
             details.addWidget(meta_label)
             details.addWidget(reason_label)
@@ -1834,27 +1832,34 @@ class MainWindow(QMainWindow):
         elif (hasattr(self, "results_list")
               and watched is self.results_list.viewport()
               and event.type() == QEvent.Type.Resize):
-            QTimer.singleShot(0, self._refresh_candidate_rows)
-        elif (isinstance(watched, QPushButton)
-              and event.type() == QEvent.Type.FontChange):
-            QTimer.singleShot(0, self._refresh_font_layout)
-        elif (isinstance(watched, QLabel)
-              and watched.objectName() in {"candidatePath", "candidateMeta", "candidateReason"}
-              and event.type() == QEvent.Type.FontChange):
-            QTimer.singleShot(0, self._refresh_candidate_rows)
+            self._schedule_candidate_row_refresh()
         return super().eventFilter(watched, event)
+
+    def _schedule_candidate_row_refresh(self) -> None:
+        if self._closing or self._candidate_row_refresh_pending:
+            return
+        self._candidate_row_refresh_pending = True
+        QTimer.singleShot(0, self._run_candidate_row_refresh)
+
+    def _run_candidate_row_refresh(self) -> None:
+        self._candidate_row_refresh_pending = False
+        self._refresh_candidate_rows()
 
     def _refresh_font_layout(self) -> None:
         if self._closing:
             return
         # A widget-local focus stylesheet can pin the list's old font.
         self.results_list.setFont(QApplication.font())
+        heading_font = QApplication.font()
+        heading_font.setBold(True)
         for index in range(self.results_list.count()):
             row = self.results_list.itemWidget(self.results_list.item(index))
             if row is not None:
                 row.setFont(QApplication.font())
                 for child in row.findChildren(QWidget):
-                    child.setFont(QApplication.font())
+                    child.setFont(heading_font if child.objectName() in {
+                        "candidatePath", "candidateMeta"
+                    } else QApplication.font())
         self._refresh_heading_fonts()
         for button in (self.test_connection_button, self.select_button,
                        self.scan_button, self.cancel_button,
