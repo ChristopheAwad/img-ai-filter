@@ -9,8 +9,8 @@ from threading import Event
 import time
 from typing import Any
 
-from PySide6.QtCore import QSettings, QSize, QTimer, Qt
-from PySide6.QtGui import QAction, QIcon, QImage, QPixmap
+from PySide6.QtCore import QEvent, QSettings, QSize, QTimer, Qt
+from PySide6.QtGui import QAction, QIcon, QImage, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QAbstractItemView,
@@ -431,6 +431,7 @@ class MainWindow(QMainWindow):
         self._operation_error: Exception | None = None
         self._generation = 0
         self._closing = False
+        self._candidate_row_refresh_pending = False
         self._scan_started_monotonic: float | None = None
         self._scan_started_at_utc: str | None = None
         self._scan_source_folder: str | None = None
@@ -494,6 +495,8 @@ class MainWindow(QMainWindow):
 
         header = QFrame()
         header.setObjectName("header")
+        header.setBackgroundRole(QPalette.ColorRole.Button)
+        header.setAutoFillBackground(True)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(28, 24, 28, 22)
         header_layout.setSpacing(16)
@@ -698,6 +701,8 @@ class MainWindow(QMainWindow):
         root.setLayout(root_layout)
         self.setCentralWidget(root)
         self._apply_style()
+        QApplication.instance().installEventFilter(self)
+        self.results_list.viewport().installEventFilter(self)
         for button in (
             self.test_connection_button,
             self.select_button,
@@ -717,6 +722,7 @@ class MainWindow(QMainWindow):
         self.scan_button.clicked.connect(self._request_scan)
         self.cancel_button.clicked.connect(self._cancel_operation)
         self.results_list.itemChanged.connect(self._candidate_item_changed)
+        self.results_list.itemSelectionChanged.connect(self._update_candidate_selection_colors)
         self._update_controls()
 
     @staticmethod
@@ -1143,6 +1149,8 @@ class MainWindow(QMainWindow):
             row.adjustSize()
             item.setSizeHint(QSize(0, max(110, row.sizeHint().height())))
             self.results_list.setItemWidget(item, row)
+        self._refresh_heading_fonts()
+        self._refresh_candidate_rows()
         self.results_empty_label.setVisible(
             not summary.candidates
             and summary.state
@@ -1803,137 +1811,135 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(
-            """
-            QMainWindow, QWidget {
-                background: #edf3f7;
-                color: #132238;
-                font-size: 14px;
-            }
-            QFrame#header {
-                background: #132238;
-                border-bottom: 4px solid #2ba4b8;
-            }
-            QLabel#title {
-                background: transparent;
-                color: #ffffff;
-                font-size: 26px;
-                font-weight: 700;
-            }
-            QLabel#description {
-                background: transparent;
-                color: #c8d7e4;
-                font-size: 14px;
-            }
-            QToolButton#applicationMenuButton {
-                background: transparent;
-                border: 1px solid #6f899d;
-                border-radius: 4px;
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                padding: 2px 10px 7px 10px;
-            }
-            QToolButton#applicationMenuButton:hover,
-            QToolButton#applicationMenuButton:focus {
-                background: #25425e;
-                border-color: #c8d7e4;
-            }
-            QToolButton#applicationMenuButton:disabled {
-                color: #8898a4;
-                border-color: #40566b;
-            }
-            QLabel#sectionHeading {
-                font-size: 16px;
-                font-weight: 700;
-            }
-            QLabel#folderPath {
-                background: #ffffff;
-                border: 1px solid #c4d2dc;
-                border-radius: 4px;
-                padding: 9px 11px;
-            }
-            QLineEdit#serverUrl {
-                background: #ffffff;
-                border: 1px solid #c4d2dc;
-                border-radius: 4px;
-                padding: 9px 11px;
-            }
-            QLabel#model {
-                color: #40566b;
-                font-weight: 700;
-            }
-            QLabel#status {
-                color: #40566b;
-                padding: 2px 0;
-            }
-            QPushButton#primaryButton {
-                background: #136f8a;
-                border: 2px solid #136f8a;
-                border-radius: 4px;
-                color: #ffffff;
-                font-weight: 700;
-                padding: 9px 18px;
-            }
-            QPushButton#primaryButton:hover {
-                background: #0d5b72;
-                border-color: #0d5b72;
-            }
-            QPushButton#primaryButton:focus {
-                border-color: #132238;
-            }
-            QPushButton#primaryButton:disabled {
-                background: #aab7c0;
-                border-color: #aab7c0;
-                color: #edf3f7;
-            }
-            QPushButton#secondaryButton {
-                background: #ffffff;
-                border: 2px solid #136f8a;
-                border-radius: 4px;
-                color: #136f8a;
-                font-weight: 700;
-                padding: 9px 18px;
-            }
-            QPushButton#secondaryButton:focus {
-                border-color: #132238;
-                background: #eef7f9;
-            }
-            QPushButton#secondaryButton:disabled {
-                border-color: #aab7c0;
-                color: #8898a4;
-            }
-            QListWidget#results {
-                alternate-background-color: #f5f8fa;
-                background: #ffffff;
-                border: 1px solid #c4d2dc;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QListWidget#results:focus {
-                border-color: #136f8a;
-            }
-            QListWidget#results::indicator {
-                width: 0;
-                height: 0;
-            }
-            QLabel#candidatePath {
-                color: #132238;
-                font-weight: 700;
-            }
-            QLabel#candidateMeta {
-                color: #136f8a;
-                font-weight: 700;
-            }
-            QLabel#candidateReason {
-                color: #40566b;
-            }
-            QListWidget#results::item {
-                padding: 7px 8px;
-            }
-            QListWidget#results::item:selected {
-                background: #d6edf2;
-                color: #132238;
-            }
-            """
+        # A stylesheet on the whole window freezes the inherited application
+        # palette and font on some Qt platforms. Scope focus rules to controls.
+        self._refresh_heading_fonts()
+        for button in (self.cancel_button, self.activity_history_button,
+                       self.select_quarantine_button, self.selection_button):
+            button.setStyleSheet(
+                "QPushButton#secondaryButton:focus { border: 2px solid palette(highlight); }"
+            )
+        self.results_list.setStyleSheet(
+            "QListWidget#results:focus { border: 2px solid palette(highlight); }"
+            "QListWidget#results::indicator { width: 0; height: 0; }"
         )
+
+    def eventFilter(self, watched: Any, event: QEvent) -> bool:
+        if watched is QApplication.instance() and event.type() == QEvent.Type.ApplicationFontChange:
+            QTimer.singleShot(0, self._refresh_font_layout)
+        elif watched is QApplication.instance() and event.type() == QEvent.Type.ApplicationPaletteChange:
+            QTimer.singleShot(0, self._refresh_palette)
+        elif (hasattr(self, "results_list")
+              and watched is self.results_list.viewport()
+              and event.type() == QEvent.Type.Resize):
+            self._schedule_candidate_row_refresh()
+        return super().eventFilter(watched, event)
+
+    def _schedule_candidate_row_refresh(self) -> None:
+        if self._closing or self._candidate_row_refresh_pending:
+            return
+        self._candidate_row_refresh_pending = True
+        QTimer.singleShot(0, self._run_candidate_row_refresh)
+
+    def _run_candidate_row_refresh(self) -> None:
+        self._candidate_row_refresh_pending = False
+        self._refresh_candidate_rows()
+
+    def _refresh_font_layout(self) -> None:
+        if self._closing:
+            return
+        # A widget-local focus stylesheet can pin the list's old font.
+        self.results_list.setFont(QApplication.font())
+        heading_font = QApplication.font()
+        heading_font.setBold(True)
+        for index in range(self.results_list.count()):
+            row = self.results_list.itemWidget(self.results_list.item(index))
+            if row is not None:
+                row.setFont(QApplication.font())
+                for child in row.findChildren(QWidget):
+                    child.setFont(heading_font if child.objectName() in {
+                        "candidatePath", "candidateMeta"
+                    } else QApplication.font())
+        self._refresh_heading_fonts()
+        for button in (self.test_connection_button, self.select_button,
+                       self.scan_button, self.cancel_button,
+                       self.activity_history_button, self.select_quarantine_button,
+                       self.move_quarantine_button, self.selection_button):
+            button.setFont(QApplication.font())
+            button.setMinimumSize(button.minimumSizeHint())
+            button.setMinimumHeight(button.sizeHint().height() + 2)
+            button.updateGeometry()
+        self.content_scroll.widget().layout().activate()
+        self.content_scroll.widget().adjustSize()
+        self._refresh_candidate_rows()
+
+    def _refresh_palette(self) -> None:
+        if self._closing:
+            return
+        # Qt keeps the old palette for controls with local focus stylesheets.
+        palette = QApplication.palette()
+        self.results_list.setPalette(palette)
+        for button in (self.cancel_button, self.activity_history_button,
+                       self.select_quarantine_button, self.selection_button):
+            button.setPalette(palette)
+        self._update_candidate_selection_colors()
+
+    def _update_candidate_selection_colors(self) -> None:
+        for index in range(self.results_list.count()):
+            item = self.results_list.item(index)
+            row = self.results_list.itemWidget(item)
+            if row is None:
+                continue
+            for name in ("candidatePath", "candidateMeta", "candidateReason"):
+                label = row.findChild(QLabel, name)
+                if label is None:
+                    continue
+                if item.isSelected():
+                    palette = QPalette(QApplication.palette())
+                    for group in (QPalette.ColorGroup.Active,
+                                  QPalette.ColorGroup.Inactive,
+                                  QPalette.ColorGroup.Disabled):
+                        palette.setColor(group, QPalette.ColorRole.WindowText,
+                                         palette.color(group, QPalette.ColorRole.HighlightedText))
+                    label.setPalette(palette)
+                else:
+                    label.setPalette(QPalette())
+
+    def _refresh_heading_fonts(self) -> None:
+        heading_font = QApplication.font()
+        heading_font.setBold(True)
+        for label in self.findChildren(QLabel):
+            if label.objectName() in {"title", "sectionHeading", "model",
+                                      "candidatePath", "candidateMeta"}:
+                label.setFont(heading_font)
+
+    def _refresh_candidate_rows(self) -> None:
+        if self._closing:
+            return
+        for index in range(self.results_list.count()):
+            item = self.results_list.item(index)
+            row = self.results_list.itemWidget(item)
+            if row is None:
+                continue
+            layout = row.layout()
+            margins = layout.contentsMargins()
+            checkbox = row.findChild(QCheckBox, "candidateCheckBox")
+            preview = row.findChild(QLabel, "candidatePreview")
+            path = row.findChild(QLabel, "candidatePath")
+            meta = row.findChild(QLabel, "candidateMeta")
+            reason = row.findChild(QLabel, "candidateReason")
+            if checkbox is None or path is None or meta is None or reason is None:
+                continue
+            width = (self.results_list.viewport().width() - margins.left()
+                     - margins.right() - checkbox.sizeHint().width()
+                     - (preview.width() if preview is not None else 0)
+                     - layout.spacing() * (3 if preview is not None else 2) - 8)
+            width = max(1, width)
+            text_height = (path.heightForWidth(width) + meta.sizeHint().height()
+                           + reason.heightForWidth(width) + 8)
+            height = (max(checkbox.sizeHint().height(),
+                          preview.height() if preview is not None else 0,
+                          text_height) + margins.top() + margins.bottom())
+            height = max(height, layout.sizeHint().height())
+            if item.sizeHint().height() != height:
+                item.setSizeHint(QSize(0, height))

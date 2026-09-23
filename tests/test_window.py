@@ -1,12 +1,17 @@
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect
-from PySide6.QtWidgets import QAbstractButton, QFileDialog, QFrame, QLabel, QPushButton
+import pytest
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtWidgets import QApplication, QAbstractButton, QCheckBox, QFileDialog, QFrame, QLabel, QPushButton
 
 from img_ai_filter import scanner as scanner_module
 from img_ai_filter.endpoint import build_vision_endpoint_config
 from img_ai_filter.scanner import ScanResult
+from img_ai_filter.image_payload import SourceIdentity
+from img_ai_filter.scan_workflow import ScanCandidate, ScanState, ScanSummary
 from img_ai_filter.window import MainWindow
+from img_ai_filter.window import ActivityHistoryDialog, CandidateSelectionSettingsDialog
 
 
 def forbidden_scan(path: Path) -> ScanResult:
@@ -83,11 +88,248 @@ def test_review_controls_have_visible_keyboard_focus_styles(qtbot) -> None:
     window = selection_window()
     qtbot.addWidget(window)
 
-    stylesheet = window.styleSheet()
+    assert "QListWidget#results:focus" in window.results_list.styleSheet()
+    assert "QPushButton#secondaryButton:focus" in window.selection_button.styleSheet()
+    assert "outline: 0" not in window.results_list.styleSheet()
 
-    assert "QListWidget#results:focus" in stylesheet
-    assert "QPushButton#secondaryButton:focus" in stylesheet
-    assert "outline: 0" not in stylesheet
+
+@pytest.fixture
+def application_appearance(qtbot):
+    app = QApplication.instance()
+    original_palette = QPalette(app.palette())
+    original_font = QFont(app.font())
+    yield app
+    app.setPalette(original_palette)
+    app.setFont(original_font)
+    app.processEvents()
+
+
+def _test_palette(background: str, foreground: str, accent: str) -> QPalette:
+    palette = QPalette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base, QPalette.ColorRole.Button):
+            palette.setColor(group, role, QColor(background))
+        for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+            palette.setColor(group, role, QColor(foreground))
+        palette.setColor(group, QPalette.ColorRole.Highlight, QColor(accent))
+        palette.setColor(group, QPalette.ColorRole.HighlightedText, QColor(background))
+    return palette
+
+
+@pytest.mark.parametrize(
+    ("background", "foreground", "accent"),
+    [("#fcf9f3", "#171717", "#325cdd"), ("#181c25", "#faf5dc", "#f3d422"),
+     ("#000000", "#ffffff", "#ffff00")],
+)
+def test_main_window_uses_system_palette(
+    qtbot, application_appearance, background, foreground, accent
+) -> None:
+    application_appearance.setPalette(_test_palette(background, foreground, accent))
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.show()
+    application_appearance.processEvents()
+
+    for widget, role in (
+        (window.centralWidget(), QPalette.ColorRole.Window),
+        (window.server_url_input, QPalette.ColorRole.Base),
+        (window.results_list, QPalette.ColorRole.Base),
+        (window.status_label, QPalette.ColorRole.WindowText),
+        (window.test_connection_button, QPalette.ColorRole.ButtonText),
+    ):
+        assert widget.palette().color(role) == QColor(
+            background if role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base) else foreground
+        )
+    application_appearance.setPalette(_test_palette("#101010", "#f8f8f8", "#00ffff"))
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    assert window.status_label.palette().color(QPalette.ColorRole.WindowText) == QColor("#f8f8f8")
+    assert window.results_list.palette().color(QPalette.ColorRole.Base) == QColor("#101010")
+    assert window.selection_button.palette().color(
+        QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText
+    ) == QColor("#f8f8f8")
+    application_appearance.setPalette(_test_palette("#fafafa", "#111111", "#3030ee"))
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    assert window.results_list.palette().color(QPalette.ColorRole.Base) == QColor("#fafafa")
+    assert window.selection_button.palette().color(
+        QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText
+    ) == QColor("#111111")
+
+
+def test_large_font_inherits_and_controls_fit_after_live_change(qtbot, application_appearance) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+    application_appearance.processEvents()
+
+    font = QFont(application_appearance.font())
+    font.setPointSize(19)
+    application_appearance.setFont(font)
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    for widget in (window.status_label, window.server_url_input, window.select_button,
+                   window.results_list, window.application_menu_button):
+        assert widget.font().pointSize() == 19
+    for button in main_action_buttons(window):
+        assert button.font().pointSize() == 19, button.text()
+        assert button.sizeHint().height() <= button.height(), button.text()
+
+
+def test_candidate_row_tracks_large_font_and_palette_after_resize(
+    qtbot, application_appearance, tmp_path
+) -> None:
+    application_appearance.setPalette(_test_palette("#000000", "#ffffff", "#ffff00"))
+    font = QFont(application_appearance.font())
+    font.setPointSize(19)
+    application_appearance.setFont(font)
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+    candidate = ScanCandidate(
+        tmp_path / ("very-long-folder-name-" * 6) / "candidate.png", "screenshot",
+        "A long reason for review. " * 10, 0.95,
+        SourceIdentity(0, "a" * 64), b"not an image", 1, 1,
+    )
+    window._finish_scan(ScanSummary(ScanState.COMPLETED, (candidate,), 1, 1, 0, 0, 0, 0), None)
+    application_appearance.processEvents()
+
+    item = window.results_list.item(0)
+    row = window.results_list.itemWidget(item)
+    checkbox = row.findChild(QCheckBox, "candidateCheckBox")
+    path = row.findChild(QLabel, "candidatePath")
+    assert item.data(Qt.ItemDataRole.UserRole) is candidate
+    assert item.checkState() == Qt.CheckState.Checked
+    assert checkbox.isChecked()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#ffffff")
+    assert path.font().pointSize() == 19
+    assert item.sizeHint().height() >= row.layout().sizeHint().height()
+
+    window.resize(820, 600)
+    application_appearance.processEvents()
+    assert item.sizeHint().height() >= row.layout().sizeHint().height()
+
+
+def test_existing_candidate_grows_after_font_change(qtbot, application_appearance, tmp_path) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+    candidate = ScanCandidate(
+        tmp_path / ("long-path-" * 12) / "example.png", "meme",
+        "Review this image because it contains text. " * 12, 0.6,
+        SourceIdentity(0, "a" * 64), b"", 1, 1,
+    )
+    window._finish_scan(ScanSummary(ScanState.COMPLETED, (candidate,), 1, 1, 0, 0, 0, 0), None)
+    application_appearance.processEvents()
+    item = window.results_list.item(0)
+    original_height = item.sizeHint().height()
+
+    font = QFont(application_appearance.font())
+    font.setPointSize(19)
+    application_appearance.setFont(font)
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    row = window.results_list.itemWidget(item)
+    assert row.findChild(QLabel, "candidatePath").font().pointSize() == 19
+    assert item.sizeHint().height() > original_height
+    assert item.sizeHint().height() >= row.layout().sizeHint().height()
+    assert item.checkState() == Qt.CheckState.Unchecked
+
+
+def test_many_candidate_rows_refresh_once_per_font_change(
+    qtbot, application_appearance, monkeypatch, tmp_path
+) -> None:
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.resize(560, 400)
+    window.show()
+    candidates = tuple(
+        ScanCandidate(
+            tmp_path / f"candidate-{index}.png", "meme", "A caption in an image.",
+            0.6, SourceIdentity(0, "a" * 64), b"", 1, 1,
+        )
+        for index in range(20)
+    )
+    window._finish_scan(ScanSummary(ScanState.COMPLETED, candidates, 20, 20, 0, 0, 0, 0), None)
+    application_appearance.processEvents()
+
+    calls = {"font": 0, "rows": 0}
+    original_font_refresh = window._refresh_font_layout
+    original_row_refresh = window._refresh_candidate_rows
+
+    def refresh_font() -> None:
+        calls["font"] += 1
+        original_font_refresh()
+
+    def refresh_rows() -> None:
+        calls["rows"] += 1
+        original_row_refresh()
+
+    monkeypatch.setattr(window, "_refresh_font_layout", refresh_font)
+    monkeypatch.setattr(window, "_refresh_candidate_rows", refresh_rows)
+    font = QFont(application_appearance.font())
+    font.setPointSize(19)
+    application_appearance.setFont(font)
+    for _ in range(4):
+        application_appearance.processEvents()
+
+    assert calls["font"] <= 3
+    assert calls["rows"] <= 8
+    assert window.results_list.item(19).data(Qt.ItemDataRole.UserRole) is candidates[19]
+    assert window.results_list.itemWidget(window.results_list.item(19)).findChild(
+        QLabel, "candidateReason"
+    ).font().pointSize() == 19
+
+
+def test_selected_candidate_uses_highlight_text_after_theme_change(
+    qtbot, application_appearance, tmp_path
+) -> None:
+    application_appearance.setPalette(_test_palette("#181c25", "#faf5dc", "#f3d422"))
+    window = selection_window()
+    qtbot.addWidget(window)
+    window.show()
+    candidate = ScanCandidate(
+        tmp_path / "example.png", "meme", "Text on an image", 0.6,
+        SourceIdentity(0, "a" * 64), b"", 1, 1,
+    )
+    window._finish_scan(ScanSummary(ScanState.COMPLETED, (candidate,), 1, 1, 0, 0, 0, 0), None)
+    item = window.results_list.item(0)
+    row = window.results_list.itemWidget(item)
+    path = row.findChild(QLabel, "candidatePath")
+    reason = row.findChild(QLabel, "candidateReason")
+    window.results_list.setCurrentItem(item)
+    application_appearance.processEvents()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#181c25")
+    assert reason.palette().color(QPalette.ColorRole.WindowText) == QColor("#181c25")
+
+    application_appearance.setPalette(_test_palette("#000000", "#ffffff", "#00ffff"))
+    application_appearance.processEvents()
+    application_appearance.processEvents()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#000000")
+    window.results_list.clearSelection()
+    application_appearance.processEvents()
+    assert path.palette().color(QPalette.ColorRole.WindowText) == QColor("#ffffff")
+
+
+def test_child_dialogs_follow_system_palette_and_font(qtbot, application_appearance) -> None:
+    application_appearance.setPalette(_test_palette("#000000", "#ffffff", "#ffff00"))
+    font = QFont(application_appearance.font())
+    font.setPointSize(16)
+    application_appearance.setFont(font)
+    window = selection_window()
+    qtbot.addWidget(window)
+    for dialog in (CandidateSelectionSettingsDialog(_EmptyStore(), 90, window),
+                   ActivityHistoryDialog(_EmptyStore(), window)):
+        qtbot.addWidget(dialog)
+        dialog.show()
+        application_appearance.processEvents()
+        assert dialog.palette().color(QPalette.ColorRole.Window) == QColor("#000000")
+        assert dialog.font().pointSize() == 16
+        for label in dialog.findChildren(QLabel):
+            assert label.palette().color(QPalette.ColorRole.WindowText) == QColor("#ffffff")
 
 
 def test_application_commands_are_in_fixed_header_menu(qtbot) -> None:
