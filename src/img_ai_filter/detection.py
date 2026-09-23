@@ -25,6 +25,7 @@ ALL_CATEGORIES = frozenset(
         "reaction_image",
         "comic",
         "image_macro",
+        "paper_document",
         "uncertain",
     }
 )
@@ -36,6 +37,7 @@ CANDIDATE_CATEGORIES = frozenset(
         "reaction_image",
         "comic",
         "image_macro",
+        "paper_document",
         "uncertain",
     }
 )
@@ -47,6 +49,7 @@ CAPTIONED_MEME = "captioned_meme"
 REACTION_IMAGE = "reaction_image"
 COMIC = "comic"
 IMAGE_MACRO = "image_macro"
+PAPER_DOCUMENT = "paper_document"
 
 DEFAULT_HIGH_CONFIDENCE_THRESHOLD = 0.9
 

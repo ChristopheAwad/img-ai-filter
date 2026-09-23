@@ -96,6 +96,7 @@ def test_sends_one_nonstreaming_schema_constrained_image_request() -> None:
         "reaction_image",
         "comic",
         "image_macro",
+        "paper_document",
         "uncertain",
     }
     user_content = payload["messages"][1]["content"]
@@ -115,6 +116,9 @@ def test_prompt_forbids_recognized_text_and_requires_visual_reason_only() -> Non
     assert "visual" in prompt
     assert "ordinary" in prompt
     assert "uncertain" in prompt
+    assert "paper_document" in prompt
+    assert "notebook" in prompt
+    assert "incidental" in prompt
     assert "social_post" not in prompt
 
 
@@ -220,6 +224,32 @@ def test_transport_failure_is_redacted_and_not_retried() -> None:
 
     assert str(raised.value) == "The image could not be analyzed by KoboldCpp"
     assert len(transport.calls) == 1
+
+
+def test_timeout_and_invalid_reply_have_safe_failure_kinds() -> None:
+    with pytest.raises(VisionClientError) as timed_out:
+        classify_image(_config(), "data:image/png;base64,aQ==", FakeTransport(TimeoutError("secret")))
+    assert timed_out.value.kind == "timeout"
+    assert "secret" not in str(timed_out.value)
+
+    with pytest.raises(VisionClientError) as invalid:
+        classify_image(_config(), "data:image/png;base64,aQ==", FakeTransport(_response("secret")))
+    assert invalid.value.kind == "invalid_response"
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_kind"),
+    [
+        (OSError("private host"), "connection"),
+        (_response(_decision_content(), status=503), "server_response"),
+        (_response(""), "invalid_response"),
+    ],
+)
+def test_failed_requests_have_safe_kinds(response, expected_kind: str) -> None:
+    with pytest.raises(VisionClientError) as raised:
+        classify_image(_config(), "data:image/png;base64,aQ==", FakeTransport(response))
+    assert raised.value.kind == expected_kind
+    assert "private host" not in str(raised.value)
 
 
 def test_transport_failure_after_cancel_event_is_reported_as_cancelled() -> None:

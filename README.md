@@ -1,6 +1,6 @@
 # Image Filter
 
-Image Filter is a privacy-conscious desktop application for finding screenshots and memes in selected image folders. It does not change files during a scan.
+Image Filter is a privacy-conscious desktop application for finding screenshots, memes, and photographed paper documents in selected image folders. It does not change files during a scan.
 
 The current experimental MVP connects **Scan Folder** to a user-managed
 KoboldCpp vision server on loopback or the private local network. Every
@@ -18,7 +18,9 @@ the app shows the exact destination, warns when HTTP is unencrypted, and asks
 for consent. Public Internet endpoints and redirects are rejected. By default,
 candidates with model-reported confidence of 90% or higher start checked; lower
 confidence candidates start unchecked. Failed and uncertain results are omitted
-and included in visible counts.
+and included in visible counts. The completed scan status groups failures by
+preparation, timeout, connection, server response, invalid model reply, or
+other cause. It does not save the failure breakdown or raw server replies.
 
 The status line shows elapsed time during each approved scan and the final
 duration of scans and confirmed quarantine batches. **Activity History** shows
@@ -111,8 +113,12 @@ Selecting a folder does not search it, load images, or contact the server.
 test has discovered a model.
 
 During an approved scan, supported images are resized and converted to PNG in
-memory, then sent sequentially. The app shows only screenshot/meme-style
-candidates. It does not rename, move, delete, or edit source images.
+memory, then sent sequentially. The app shows screenshot/meme-style candidates
+and photos where a notebook page or printed/handwritten paper document is the
+main subject. Incidental paper in an ordinary photo is not a candidate. The
+result depends on the selected vision model; a missed photo can still be
+classified ordinary or fail analysis. It does not rename, move, delete, or edit
+source images.
 
 The default automatic-selection threshold is 90%. This confidence is reported
 by the selected model and is not a calibrated probability or accuracy
@@ -139,16 +145,16 @@ sha256sum --check SHA256SUMS
 To use the AppImage:
 
 ```bash
-chmod +x ImageFilter-0.2.4-x86_64.AppImage
-./ImageFilter-0.2.4-x86_64.AppImage
+chmod +x ImageFilter-0.3.0-x86_64.AppImage
+./ImageFilter-0.3.0-x86_64.AppImage
 ```
 
 If AppImage mounting is unavailable, extract the fallback without installing
 Python or FUSE:
 
 ```bash
-tar -xzf ImageFilter-0.2.4-linux-x86_64.tar.gz
-./ImageFilter-0.2.4-linux-x86_64/image-filter
+tar -xzf ImageFilter-0.3.0-linux-x86_64.tar.gz
+./ImageFilter-0.3.0-linux-x86_64/image-filter
 ```
 
 The package still needs a normal Linux desktop, graphics drivers, display

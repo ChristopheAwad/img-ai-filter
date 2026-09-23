@@ -524,6 +524,45 @@ Implementation order:
 5. Update candidate row sizing and fixed controls only where the new tests show clipping; keep the 96-pixel preview bound.
 6. Run focused GUI tests, the complete offline suite, and manual desktop checks before proposing Git operations.
 
+### F-014: Paper Document Candidates and Scan Failure Diagnosis
+
+- **Status:** in progress
+- **Tier:** Tier 1, detection accuracy and scan troubleshooting
+- **Effort:** Medium because a new vision category crosses the request schema, response contract, candidate routing, review UI, evaluation labels, and safe failure reporting
+- **Planning files:** `feature.md`, `roadmap.md`, `project-brief.md`, `evaluation/README.md`, `README.md`
+- **Likely implementation files:** `src/img_ai_filter/vision_client.py`, `src/img_ai_filter/vision_response.py`, `src/img_ai_filter/scan_workflow.py`, `src/img_ai_filter/image_payload.py`, `src/img_ai_filter/http_transport.py`, `src/img_ai_filter/detection.py`, `src/img_ai_filter/window.py`, and focused offline tests
+- **Depends on:** shipped F-003 KoboldCpp scan, F-005 image preparation, F-009 confidence selection, and F-012 candidate UI
+- **Blocks:** reliable review of photographed notes/documents and diagnosis of failed analyses in the user's real-data scan
+
+Flag camera photos whose main subject is a handwritten or printed notebook page or paper document while ordinary photos with incidental paper stay hidden. Give safe aggregate reasons for failed analyses without recording private image content or raw server replies. The observed 238-image scan returned 206 ordinary, 31 failed, and only one candidate. The failure causes are not yet known.
+
+Dependency graph:
+
+```text
+F-003 server scan + F-005 image preparation
+                    |
+                    v
+F-014 test-first category and safe failure-kind contracts
+                    |
+                    v
+F-014 prompt, parser, routing, and scan diagnostics
+                    |
+                    v
+F-009 review threshold + F-012 candidate UI verification
+                    |
+                    v
+Small user-owned desktop sample verification
+```
+
+Implementation order:
+
+1. Approve the detailed test-first handoff in `feature.md`.
+2. Record the full network-blocked regression baseline and write failing invalid/empty/boundary, failure-path, routing, GUI, privacy, and evaluation tests.
+3. Add the new category to the schema, visual-only prompt, parser, candidate path, and offline label contract.
+4. Add typed, safe failure kinds and aggregate scan diagnostics without saving image-level or raw failure data.
+5. Show the breakdown in the scan status, retain history and quarantine safety, and update product and evaluation documentation.
+6. Run focused tests and the full offline suite; ask the user to verify a small local sample in the desktop GUI before any Git publication.
+
 ## UI Backlog
 
 These suggestions came from the 2026-09-22 UI audit. They are outside F-012 and F-013 and need separate prioritization before implementation.

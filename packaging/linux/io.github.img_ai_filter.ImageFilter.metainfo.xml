@@ -2,10 +2,16 @@
 <component type="desktop-application">
   <id>io.github.img_ai_filter.ImageFilter</id>
   <name>Image Filter</name>
-  <summary>Find screenshots and memes with a private vision server</summary>
+  <summary>Review screenshots, memes, and paper documents with a private vision server</summary>
+  <description>
+    <p>Image Filter helps you review screenshots, memes, and photos of paper documents in a chosen image folder. It sends images to your own local-network vision server after you consent to each scan.</p>
+    <p>Review the results before moving selected files to a quarantine folder. Scans do not change source files.</p>
+  </description>
   <metadata_license>CC0-1.0</metadata_license>
+  <url type="homepage">https://github.com/ChristopheAwad/img-ai-filter</url>
   <launchable type="desktop-id">io.github.img_ai_filter.ImageFilter.desktop</launchable>
   <releases>
+    <release version="0.3.0" date="2026-09-22"/>
     <release version="0.2.4" date="2026-09-22"/>
     <release version="0.2.3" date="2026-09-22"/>
     <release version="0.2.2" date="2026-09-22"/>

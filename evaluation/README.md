@@ -33,7 +33,9 @@ columns:
 
 - `path` — path relative to the dataset root, forward slashes, never absolute.
 - `label` — `ordinary`, `screenshot`, `captioned_meme`,
-  `reaction_image`, `comic`, `image_macro`, or `uncertain`.
+  `reaction_image`, `comic`, `image_macro`, `paper_document`, or `uncertain`.
+  Use `paper_document` for photos whose main subject is a notebook page or
+  printed/handwritten paper document; incidental background paper is ordinary.
 - `split` — `tuning` (free to tune thresholds) or `holdout` (measured only after
   thresholds are frozen).
 - `source` — where the image came from, such as `local-user-supplied`.
@@ -95,4 +97,5 @@ No model is trained or packaged by this project.
 A real dataset must reach the minimum category coverage before making accuracy
 claims or enabling checked-by-default results. Until then, reports and the
 server-only MVP are experimental. Testing one vision model does not validate a
-different model selected by a user.
+different model selected by a user. The legacy minimum counts do not yet
+include the new `paper_document` label; a small sample is exploratory only.

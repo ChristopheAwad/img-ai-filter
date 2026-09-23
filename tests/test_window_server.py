@@ -23,7 +23,7 @@ from img_ai_filter.quarantine import (
     QuarantineState,
     QuarantineSummary,
 )
-from img_ai_filter.scan_workflow import ScanCandidate, ScanState, ScanSummary
+from img_ai_filter.scan_workflow import ScanCandidate, ScanState, ScanSummary, ScanFailureBreakdown
 from img_ai_filter.activity_history import (
     SCAN_HISTORY_KEY,
     QuarantineHistoryRecord,
@@ -136,6 +136,24 @@ def _summary(
         failed,
         skipped_directories,
     )
+
+
+def test_document_candidate_and_failure_counts_are_clear_in_review(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "notes.jpg"
+    path.write_bytes(b"sample")
+    window = MainWindow(settings_store=MemoryStore())
+    qtbot.addWidget(window)
+    summary = ScanSummary(
+        ScanState.COMPLETED_WITH_SKIPS, (_candidate(path, "paper_document"),),
+        4, 2, 1, 0, 2, 0,
+        ScanFailureBreakdown(preparation=1, invalid_response=1),
+    )
+    window._finish_scan(summary, None)
+    assert window.results_list.count() == 1
+    row = window.results_list.itemWidget(window.results_list.item(0))
+    assert "paper document" in row.findChild(QLabel, "candidateMeta").text().lower()
+    assert "1 preparation" in window.status_label.text().lower()
+    assert "1 invalid response" in window.status_label.text().lower()
 
 
 def _select(window: MainWindow, monkeypatch, folder: Path) -> None:
@@ -1946,7 +1964,7 @@ def test_empty_completed_scan_leaves_selection_disabled(
     assert window.results_list.count() == 0
     assert window.results_empty_label.isVisibleTo(window)
     assert window.results_empty_label.text() == (
-        "No likely screenshots or memes were found."
+        "No likely screenshots, memes, or paper documents were found."
     )
     assert window.selection_button.text() == "Select All"
     assert not window.selection_button.isEnabled()

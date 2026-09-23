@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "img-ai-filter"
-version = "0.2.4"
-description = "Privacy-conscious desktop review tool for screenshots and memes"
+version = "0.3.0"
+description = "Private desktop review tool for screenshots, memes, and paper documents"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.8",
