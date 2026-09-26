@@ -137,6 +137,17 @@ def test_write_checksums_is_sorted_and_uses_file_names(tmp_path: Path) -> None:
     assert all("/" not in line.split("  ", 1)[1] for line in lines)
 
 
+def test_write_checksums_uses_lf_line_endings(tmp_path: Path) -> None:
+    tools = _load_tools()
+    artifact = tmp_path / "ImageFilter-0.1.0-windows-x86_64.zip"
+    artifact.write_bytes(b"data")
+    output = tmp_path / "SHA256SUMS-windows"
+
+    tools.write_checksums([artifact], output)
+
+    assert b"\r" not in output.read_bytes()
+
+
 def test_write_checksums_rejects_duplicate_file_names(tmp_path: Path) -> None:
     tools = _load_tools()
     first_dir = tmp_path / "first"
