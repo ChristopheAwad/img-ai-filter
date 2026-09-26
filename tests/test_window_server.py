@@ -6,7 +6,7 @@ import hashlib
 import weakref
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, Timer
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
@@ -1323,7 +1323,7 @@ def test_close_during_quarantine_waits_for_move_then_closes(
 
     def on_move(candidates, source_root, quarantine_root, *, progress=None):
         entered.set()
-        release.wait(2)
+        release.wait(30)
         return _move_summary(
             quarantine,
             (
@@ -1348,9 +1348,14 @@ def test_close_during_quarantine_waits_for_move_then_closes(
     window.move_quarantine_button.click()
     qtbot.waitUntil(entered.is_set)
 
-    window.close()
+    releasing = Timer(0.2, release.set)
+    releasing.start()
+    try:
+        window.close()
+    finally:
+        releasing.join()
+
     qtbot.waitUntil(lambda: not window.isVisible())
-    release.set()
     qtbot.waitUntil(lambda: len(deleted) == 1)
 
     assert window._thread is None

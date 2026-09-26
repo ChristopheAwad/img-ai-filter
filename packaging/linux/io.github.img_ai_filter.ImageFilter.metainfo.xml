@@ -11,6 +11,7 @@
   <url type="homepage">https://github.com/ChristopheAwad/img-ai-filter</url>
   <launchable type="desktop-id">io.github.img_ai_filter.ImageFilter.desktop</launchable>
   <releases>
+    <release version="0.4.0" date="2026-09-26"/>
     <release version="0.3.0" date="2026-09-22"/>
     <release version="0.2.4" date="2026-09-22"/>
     <release version="0.2.3" date="2026-09-22"/>
