@@ -8,6 +8,7 @@ contacts a real network service, a real credential vault, or the GUI.
 from __future__ import annotations
 
 import inspect
+import json
 
 import pytest
 
@@ -36,6 +37,51 @@ from img_ai_filter.settings import (
 from img_ai_filter.endpoint import build_endpoint_config
 
 CONFIG = build_endpoint_config("http://127.0.0.1:8000/v1/chat/completions", "vision-model")
+
+
+def test_flag_categories_default_and_round_trip() -> None:
+    from img_ai_filter import settings, scan_workflow
+
+    store = InMemorySettingsStore()
+    all_categories = frozenset(scan_workflow.CANDIDATE_CATEGORIES)
+    assert settings.load_flag_categories(store) == all_categories
+    assert store.writes == []
+    assert settings.save_flag_categories(store, {"paper_document", "screenshot"})
+    assert settings.load_flag_categories(store) == {"screenshot", "paper_document"}
+    assert json.loads(store.values[settings.FLAG_CATEGORIES_KEY]) == [
+        "screenshot", "paper_document"
+    ]
+
+
+@pytest.mark.parametrize("raw", [
+    "", " ", "not json", "[]", '["ordinary"]', '["uncertain"]',
+    '["screenshot","screenshot"]', '["screenshot","unknown"]',
+    '["screenshot",1]', "{}", 42, True,
+])
+def test_flag_categories_invalid_stored_value_defaults_without_write(raw) -> None:
+    from img_ai_filter import settings, scan_workflow
+
+    store = InMemorySettingsStore({settings.FLAG_CATEGORIES_KEY: raw})
+    assert settings.load_flag_categories(store) == frozenset(scan_workflow.CANDIDATE_CATEGORIES)
+    assert store.writes == []
+
+
+def test_flag_categories_read_and_write_failure_and_invalid_inputs() -> None:
+    from img_ai_filter import settings, scan_workflow
+
+    class FailedStore:
+        def read(self, key):
+            raise OSError("private read detail")
+
+        def write(self, key, value):
+            raise OSError("private write detail")
+
+    assert settings.load_flag_categories(FailedStore()) == frozenset(scan_workflow.CANDIDATE_CATEGORIES)
+    assert not settings.save_flag_categories(FailedStore(), {"screenshot"})
+    store = InMemorySettingsStore()
+    for invalid in (set(), {"ordinary"}, {"screenshot", "unknown"}, "screenshot", None):
+        assert not settings.save_flag_categories(store, invalid)
+    assert store.writes == []
 
 
 def _loopback_resolver(_hostname: str) -> tuple[str, ...]:

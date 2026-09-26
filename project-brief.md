@@ -8,10 +8,10 @@ A privacy-conscious desktop app that finds screenshots, memes, and photographed 
 
 1. The user selects one source folder. Folder selection does not start a scan.
 2. The user tests a validated KoboldCpp base URL. The application confirms the version, vision capability, and loaded model.
-3. The application enables **Scan Folder** after a valid folder is selected and the server configuration is ready.
+3. The user chooses which of the six existing candidate categories to flag before scanning. All six are selected by default; the app remembers a nonempty selection. The application enables **Scan Folder** after a valid folder, ready server, and at least one selected category are present.
 4. Before every scan, the application names the destination and warns that every supported image will be sent to the KoboldCpp server, including that plain HTTP is unencrypted when selected.
 5. After consent, the application analyzes images sequentially through the OpenAI-compatible Chat Completions endpoint.
-6. The application shows only images flagged as likely screenshots, memes, photographed notebook pages or paper documents, or related review candidates. Ordinary photos with incidental background paper do not appear in the results.
+6. The application shows only selected categories among likely screenshots, memes, photographed notebook pages or paper documents, and related review candidates. Ordinary photos with incidental background paper do not appear in the results. Valid decisions in excluded categories are counted separately as filtered, not ordinary, uncertain, or failed.
 7. Candidates at or above the saved automatic-selection confidence threshold start checked; lower-confidence candidates start unchecked. The default is 90%, and model-reported confidence is not a calibrated probability.
 8. If analysis fails or remains uncertain, the image is omitted and included in visible uncertain or failed-analysis counts. Current scan status breaks failed analyses into safe aggregate causes without storing image-level failure details in history.
 9. Each displayed result explains its source path, flagging reason, and confidence, and shows a compact in-memory preview.
@@ -34,6 +34,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Recursively scan selected folders without following symbolic links.
 - Support PNG, JPEG, WebP, BMP, and TIFF initially.
 - Recognize screenshots, captioned memes, reaction images, comics, image macros, and camera photos whose main subject is handwritten or printed notebook pages or paper documents.
+- Let users choose any nonempty subset of those six categories before each scan, default to all, and remember valid choices. Choices affect only which valid results are flagged for review, never which supported images go to KoboldCpp; show a separate count for filtered results.
 - Exclude ordinary photos from scan results.
 - Show a reason and confidence for every displayed candidate.
 - Default automatic selection to model-reported confidence of 90% or higher.

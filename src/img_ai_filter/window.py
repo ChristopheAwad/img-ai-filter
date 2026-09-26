@@ -68,6 +68,7 @@ from img_ai_filter.activity_history import (
     load_activity_history,
 )
 from img_ai_filter.scan_workflow import (
+    CANDIDATE_CATEGORIES,
     ScanCandidate,
     ScanState,
     ScanSummary,
@@ -81,12 +82,14 @@ from img_ai_filter.settings import (
     QUARANTINE_FOLDER_KEY,
     SettingsStatus,
     load_auto_select_confidence,
+    load_flag_categories,
     load_include_test_releases,
     load_quarantine_folder,
     load_vision_endpoint_settings,
-    save_quarantine_folder,
     save_auto_select_confidence,
+    save_flag_categories,
     save_include_test_releases,
+    save_quarantine_folder,
     save_vision_endpoint_settings,
 )
 from img_ai_filter.update_install import (
@@ -453,6 +456,7 @@ class MainWindow(QMainWindow):
         self._auto_select_confidence_percent = load_auto_select_confidence(
             self._settings_store
         )
+        self._flag_categories = load_flag_categories(self._settings_store)
 
         server_url = DEFAULT_SERVER_URL
         if initial_config is not None:
@@ -563,6 +567,28 @@ class MainWindow(QMainWindow):
         self.select_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.select_button.clicked.connect(self._choose_folder)
 
+        categories_heading = QLabel("Flag these image types")
+        categories_heading.setObjectName("sectionHeading")
+        self.category_explanation_label = QLabel(
+            "Choose what appears for review. Every supported image is still sent to "
+            "KoboldCpp after you agree to the scan."
+        )
+        self.category_explanation_label.setObjectName("description")
+        self.category_explanation_label.setWordWrap(True)
+        category_grid = QGridLayout()
+        category_grid.setSpacing(8)
+        self.category_checkboxes: dict[str, QCheckBox] = {}
+        for index, category in enumerate(CANDIDATE_CATEGORIES):
+            checkbox = QCheckBox(category.replace("_", " ").capitalize())
+            checkbox.setObjectName(f"flagCategory_{category}")
+            checkbox.setChecked(category in self._flag_categories)
+            checkbox.toggled.connect(self._category_selection_changed)
+            self.category_checkboxes[category] = checkbox
+            category_grid.addWidget(checkbox, index // 2, index % 2)
+        self.category_status_label = QLabel()
+        self.category_status_label.setObjectName("status")
+        self.category_status_label.setWordWrap(True)
+
         self.scan_button = QPushButton("Scan Folder")
         self.scan_button.setObjectName("primaryButton")
         self.scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -671,6 +697,10 @@ class MainWindow(QMainWindow):
         content.addSpacing(8)
         content.addWidget(folder_heading)
         content.addWidget(self.folder_label)
+        content.addWidget(categories_heading)
+        content.addWidget(self.category_explanation_label)
+        content.addLayout(category_grid)
+        content.addWidget(self.category_status_label)
         content.addLayout(folder_buttons)
         content.addSpacing(8)
         content.addWidget(quarantine_heading)
@@ -770,8 +800,13 @@ class MainWindow(QMainWindow):
         self.server_url_input.setEnabled(not busy)
         self.test_connection_button.setEnabled(not busy)
         self.scan_button.setEnabled(
-            not busy and self._selected_folder is not None and ready
+            not busy
+            and self._selected_folder is not None
+            and ready
+            and any(box.isChecked() for box in self.category_checkboxes.values())
         )
+        for checkbox in self.category_checkboxes.values():
+            checkbox.setEnabled(not busy)
         self.cancel_button.setEnabled(
             (active and self._operation_kind in {"connection", "scan"})
             or (update_active and self._update_kind in {"check", "download"})
@@ -788,6 +823,26 @@ class MainWindow(QMainWindow):
         self.activity_history_button.setEnabled(not busy)
         self.settings_action.setEnabled(not busy)
         self.check_updates_action.setEnabled(not busy)
+
+    def _category_selection_changed(self, _checked: bool) -> None:
+        selected = frozenset(
+            category for category, checkbox in self.category_checkboxes.items()
+            if checkbox.isChecked()
+        )
+        if not selected:
+            self.category_status_label.setText(
+                "Choose at least one image type before scanning."
+            )
+        elif save_flag_categories(self._settings_store, selected):
+            self._flag_categories = selected
+            self.category_status_label.clear()
+        else:
+            self.category_status_label.setText("The image type choices could not be saved.")
+            for category, checkbox in self.category_checkboxes.items():
+                checkbox.blockSignals(True)
+                checkbox.setChecked(category in self._flag_categories)
+                checkbox.blockSignals(False)
+        self._update_controls()
 
     def _selection_button_state(self) -> tuple[str, bool]:
         count = self.results_list.count()
@@ -977,6 +1032,7 @@ class MainWindow(QMainWindow):
             or self._selected_folder is None
             or self._config is None
             or not self._config.model
+            or not any(box.isChecked() for box in self.category_checkboxes.values())
         ):
             return
 
@@ -1005,6 +1061,10 @@ class MainWindow(QMainWindow):
 
         folder = self._selected_folder
         config = self._config
+        selected_categories = frozenset(
+            category for category, checkbox in self.category_checkboxes.items()
+            if checkbox.isChecked()
+        )
         try:
             self._scan_started_monotonic = self._monotonic()
         except Exception:
@@ -1039,6 +1099,7 @@ class MainWindow(QMainWindow):
                 scan=self._scan,
                 cancel_event=cancel_event,
                 progress=progress,
+                selected_categories=selected_categories,
             )
 
         self._start_operation("scan", operation)
@@ -1156,6 +1217,15 @@ class MainWindow(QMainWindow):
             and summary.state
             in {ScanState.COMPLETED, ScanState.COMPLETED_WITH_SKIPS}
         )
+        if not summary.candidates and summary.filtered:
+            self.results_empty_label.setText(
+                "No results match your selection. "
+                f"{summary.filtered} images were filtered from review."
+            )
+        else:
+            self.results_empty_label.setText(
+                "No likely screenshots, memes, or paper documents were found."
+            )
         self.status_label.setText(
             self._final_scan_status(self._summary_text(summary), duration_ms, saved)
         )
@@ -1518,11 +1588,13 @@ class MainWindow(QMainWindow):
         )
         detail = ", ".join(f"{amount} {label}" for label, amount in labels if amount)
         detail_text = f" (failed: {detail})" if detail else ""
+        filtered_text = f"{summary.filtered} filtered, " if summary.filtered else ""
         return (
             f"{prefixes[summary.state]}: "
             f"{count(summary.discovered, 'discovered', 'discovered')}, "
             f"{count(summary.analyzed, 'analyzed', 'analyzed')}, "
             f"{count(summary.candidate_count, 'candidate')}, "
+            f"{filtered_text}"
             f"{count(summary.ordinary, 'ordinary', 'ordinary')}, "
             f"{count(summary.uncertain, 'uncertain', 'uncertain')}, "
             f"{count(summary.failed, 'failed', 'failed')}, "

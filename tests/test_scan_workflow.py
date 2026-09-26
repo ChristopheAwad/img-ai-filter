@@ -128,6 +128,65 @@ def test_mixed_scan_is_sequential_ordered_and_counted() -> None:
     assert "private body" not in repr(summary)
 
 
+def test_selected_categories_filter_candidates_but_still_classify_every_image() -> None:
+    from img_ai_filter.scan_workflow import CANDIDATE_CATEGORIES
+
+    categories = (*CANDIDATE_CATEGORIES, "ordinary", "uncertain")
+    paths = tuple(Path(f"{i}.png") for i in range(len(categories)))
+    outcomes = {path.name: _decision(category) for path, category in zip(paths, categories)}
+    classified = []
+
+    def classify(_config, data_url, _transport, *, cancel_event=None):
+        name = data_url.rsplit(",", 1)[1]
+        classified.append(name)
+        return outcomes[name]
+
+    summary = run_server_scan(
+        Path("/selected"), CONFIG, object(), selected_categories=frozenset({"screenshot"}),
+        scan=lambda _: ScanResult(paths, ()),
+        prepare=lambda path: Prepared(f"data:image/png;base64,{path.name}"),
+        classify=classify,
+    )
+    assert classified == [path.name for path in paths]
+    assert [candidate.category for candidate in summary.candidates] == ["screenshot"]
+    assert summary.filtered == len(CANDIDATE_CATEGORIES) - 1
+    assert summary.ordinary == summary.uncertain == 1
+    assert summary.failed == 0
+    assert summary.analyzed == summary.candidate_count + summary.filtered + summary.ordinary + summary.uncertain
+
+
+@pytest.mark.parametrize("selection", [frozenset(), frozenset({"ordinary"}), frozenset({"unknown"})])
+def test_invalid_category_selection_does_not_discover_or_send(selection) -> None:
+    with pytest.raises(ValueError):
+        run_server_scan(
+            Path("/selected"), CONFIG, object(), selected_categories=selection,
+            scan=lambda _: pytest.fail("must not discover"),
+        )
+
+
+def test_filtered_count_survives_cancellation_and_failure_without_changing_other_counts() -> None:
+    paths = (Path("a.png"), Path("b.png"), Path("c.png"))
+    cancel = Event()
+    seen = []
+
+    def classify(_config, data_url, _transport, *, cancel_event=None):
+        seen.append(data_url)
+        if len(seen) == 2:
+            cancel.set()
+        return _decision("paper_document")
+
+    summary = run_server_scan(
+        Path("/selected"), CONFIG, object(), selected_categories=frozenset({"screenshot"}),
+        scan=lambda _: ScanResult(paths, ()),
+        prepare=lambda path: Prepared(f"data:image/png;base64,{path.name}"),
+        classify=classify, cancel_event=cancel,
+    )
+    assert summary.state is ScanState.CANCELLED
+    assert summary.analyzed == summary.filtered == 2
+    assert summary.failed == summary.ordinary == summary.uncertain == summary.candidate_count == 0
+    assert len(seen) == 2
+
+
 @pytest.mark.parametrize(
     "category",
     [

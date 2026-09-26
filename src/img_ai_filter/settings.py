@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import configparser
+import json
 from dataclasses import dataclass
 from enum import Enum, auto
 import os
@@ -26,10 +27,12 @@ from img_ai_filter.endpoint import (
 )
 from img_ai_filter.detection import DEFAULT_HIGH_CONFIDENCE_THRESHOLD
 from img_ai_filter.scanner import is_windows_reparse_point
+from img_ai_filter.scan_workflow import CANDIDATE_CATEGORIES, validate_selected_categories
 
 ENDPOINT_URL_KEY = "endpoint_url"
 ENDPOINT_MODEL_KEY = "endpoint_model"
 AUTO_SELECT_CONFIDENCE_KEY = "auto_select_confidence_percent"
+FLAG_CATEGORIES_KEY = "flag_categories"
 INCLUDE_TEST_RELEASES_KEY = "include_test_releases"
 DEFAULT_AUTO_SELECT_CONFIDENCE_PERCENT = round(DEFAULT_HIGH_CONFIDENCE_THRESHOLD * 100)
 MIN_AUTO_SELECT_CONFIDENCE_PERCENT = 50
@@ -38,6 +41,41 @@ CREDENTIAL_SERVICE = "img_ai_filter"
 
 _SECTION = "settings"
 _CANONICAL_PERCENT = re.compile(r"(?:[1-9][0-9]?|100)\Z")
+
+
+def load_flag_categories(store: Any) -> frozenset[str]:
+    """Load a saved nonempty subset, or default to every candidate category."""
+    default = frozenset(CANDIDATE_CATEGORIES)
+    try:
+        raw = store.read(FLAG_CATEGORIES_KEY)
+        if not isinstance(raw, str):
+            return default
+        parsed = json.loads(raw)
+        if (
+            not isinstance(parsed, list)
+            or any(not isinstance(category, str) for category in parsed)
+            or len(parsed) != len(set(parsed))
+        ):
+            return default
+        return validate_selected_categories(frozenset(parsed))
+    except Exception:
+        return default
+
+
+def save_flag_categories(store: Any, categories: object) -> bool:
+    """Store only a valid, fixed-order selection; do not leak store failures."""
+    try:
+        selected = validate_selected_categories(categories)
+        store.write(
+            FLAG_CATEGORIES_KEY,
+            json.dumps(
+                [category for category in CANDIDATE_CATEGORIES if category in selected],
+                separators=(",", ":"),
+            ),
+        )
+    except Exception:
+        return False
+    return True
 
 
 def load_auto_select_confidence(store: Any) -> int:

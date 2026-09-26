@@ -175,6 +175,103 @@ def test_server_url_is_prefilled_and_scan_waits_for_successful_connection(
     assert not window.scan_button.isEnabled()
 
 
+def test_flag_categories_are_saved_and_empty_choice_blocks_scan(qtbot, monkeypatch, tmp_path: Path) -> None:
+    from img_ai_filter.settings import load_flag_categories
+
+    store = MemoryStore()
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+    assert len(window.category_checkboxes) == 6
+    assert all(box.isChecked() for box in window.category_checkboxes.values())
+    for name, box in window.category_checkboxes.items():
+        if name != "screenshot":
+            box.setChecked(False)
+    assert load_flag_categories(store) == {"screenshot"}
+    window.category_checkboxes["screenshot"].setChecked(False)
+    assert not window.scan_button.isEnabled()
+    assert "one" in window.category_status_label.text().lower()
+    assert load_flag_categories(store) == {"screenshot"}
+    window.category_checkboxes["paper_document"].setChecked(True)
+    assert window.scan_button.isEnabled()
+    assert load_flag_categories(store) == {"paper_document"}
+    reopened = MainWindow(settings_store=store, initial_config=READY_CONFIG)
+    qtbot.addWidget(reopened)
+    assert {name for name, box in reopened.category_checkboxes.items() if box.isChecked()} == {"paper_document"}
+
+
+def test_category_save_failure_restores_choices_without_starting_scan(qtbot, monkeypatch, tmp_path: Path) -> None:
+    store = MemoryStore()
+    calls = []
+    window = MainWindow(settings_store=store, initial_config=READY_CONFIG,
+                        run_scan=lambda *args, **kwargs: calls.append(args))
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+    store.write_error = True
+    window.category_checkboxes["comic"].setChecked(False)
+    assert window.category_checkboxes["comic"].isChecked()
+    assert all(box.isChecked() for box in window.category_checkboxes.values())
+    assert "could not be saved" in window.category_status_label.text()
+    assert calls == []
+    assert window.scan_button.isEnabled()
+
+
+def test_category_choices_are_disabled_during_scan_and_can_change_after(qtbot, monkeypatch, tmp_path: Path) -> None:
+    entered = Event()
+    release = Event()
+    selections = []
+
+    def run_scan(*args, **kwargs):
+        selections.append(kwargs["selected_categories"])
+        entered.set()
+        release.wait(2)
+        return _summary()
+
+    window = MainWindow(initial_config=READY_CONFIG, run_scan=run_scan,
+                        confirm_transfer=lambda *_: True)
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+    window.category_checkboxes["comic"].setChecked(False)
+    window.scan_button.click()
+    qtbot.waitUntil(entered.is_set)
+    assert all(not checkbox.isEnabled() for checkbox in window.category_checkboxes.values())
+    assert selections == [frozenset(window.category_checkboxes) - {"comic"}]
+    release.set()
+    qtbot.waitUntil(lambda: window.scan_button.isEnabled())
+    window.category_checkboxes["paper_document"].setChecked(False)
+    assert selections == [frozenset(window.category_checkboxes) - {"comic"}]
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: len(selections) == 2)
+    qtbot.waitUntil(lambda: window._thread is None)
+    assert selections[1] == frozenset(window.category_checkboxes) - {"comic", "paper_document"}
+
+
+def test_scan_uses_selected_category_snapshot_and_shows_filtered_count(qtbot, monkeypatch, tmp_path: Path) -> None:
+    selected = []
+
+    def run_scan(folder, config, transport, **kwargs):
+        selected.append(kwargs["selected_categories"])
+        return _summary(discovered=2, analyzed=2, ordinary=1)
+
+    window = MainWindow(initial_config=READY_CONFIG, run_scan=run_scan, confirm_transfer=lambda *_: True)
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path)
+    window.category_checkboxes["comic"].setChecked(False)
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window._thread is None)
+    assert selected == [frozenset(window.category_checkboxes) - {"comic"}]
+    assert "Every supported image" in window.category_explanation_label.text()
+
+
+def test_filtered_only_scan_has_honest_empty_state(qtbot) -> None:
+    window = MainWindow(settings_store=MemoryStore())
+    qtbot.addWidget(window)
+    summary = ScanSummary(ScanState.COMPLETED, (), 2, 2, 0, 0, 0, 0, filtered=2)
+    window._finish_scan(summary, None)
+    assert "2 filtered" in window.status_label.text()
+    assert "selection" in window.results_empty_label.text().lower()
+
+
 def test_connection_test_discovers_version_vision_model_and_persists_settings(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:

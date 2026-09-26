@@ -13,6 +13,13 @@ The app does not train or package a model. A user-managed KoboldCpp server runs
 a vision-capable GGUF model and matching `mmproj`. After explicit consent, the
 app sends every supported image to that server one at a time.
 
+Before scanning, choose which of the six image types to flag: screenshots,
+captioned memes, reaction images, comics, image macros, or paper documents.
+All six start selected, and the app remembers your choices. At least one must
+be selected to scan. These choices change which results appear for review, not
+which images are sent to KoboldCpp. The scan status counts excluded model
+decisions as **filtered**, separately from ordinary, uncertain, and failed.
+
 The server must be on loopback or the private local network. Before each scan,
 the app shows the exact destination, warns when HTTP is unencrypted, and asks
 for consent. Public Internet endpoints and redirects are rejected. By default,
@@ -98,8 +105,9 @@ python -m img_ai_filter
 3. Select **Test Connection**. The app shows the KoboldCpp version and discovered
    model when the server is ready.
 4. Select a test folder with **Select Folder**.
-5. Select **Scan Folder**, read the transfer warning, and consent only if the
-   displayed destination is correct.
+5. Under **Flag these image types**, select at least one type. Select **Scan
+   Folder**, read the transfer warning, and consent only if the displayed
+   destination is correct.
 6. Use **Settings** to change the automatic-selection confidence threshold if
    needed. It accepts 50% through 100% and applies to future scan results only.
 7. Optionally select **Select Quarantine Folder**, review the previews, use
@@ -109,13 +117,13 @@ python -m img_ai_filter
    quarantine events or clear the saved app history.
 
 Selecting a folder does not search it, load images, or contact the server.
-**Scan Folder** is enabled only after a folder is selected and the connection
-test has discovered a model.
+**Scan Folder** is enabled only after a folder is selected, at least one type is
+selected, and the connection test has discovered a model.
 
 During an approved scan, supported images are resized and converted to PNG in
-memory, then sent sequentially. The app shows screenshot/meme-style candidates
-and photos where a notebook page or printed/handwritten paper document is the
-main subject. Incidental paper in an ordinary photo is not a candidate. The
+memory, then sent sequentially. The app shows selected screenshot/meme-style
+candidates and photos where a notebook page or printed/handwritten paper
+document is the main subject. Incidental paper in an ordinary photo is not a candidate. The
 result depends on the selected vision model; a missed photo can still be
 classified ordinary or fail analysis. It does not rename, move, delete, or edit
 source images.

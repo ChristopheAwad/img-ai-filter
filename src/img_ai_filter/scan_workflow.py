@@ -66,22 +66,31 @@ class ScanSummary:
     failed: int
     skipped_directories: int
     failure_breakdown: ScanFailureBreakdown = field(default_factory=ScanFailureBreakdown)
+    filtered: int = 0
 
     @property
     def candidate_count(self) -> int:
         return len(self.candidates)
 
 
-_CANDIDATE_CATEGORIES = frozenset(
-    {
-        "screenshot",
-        "captioned_meme",
-        "reaction_image",
-        "comic",
-        "image_macro",
-        "paper_document",
-    }
+CANDIDATE_CATEGORIES = (
+    "screenshot",
+    "captioned_meme",
+    "reaction_image",
+    "comic",
+    "image_macro",
+    "paper_document",
 )
+_CANDIDATE_CATEGORIES = frozenset(CANDIDATE_CATEGORIES)
+
+
+def validate_selected_categories(categories: object) -> frozenset[str]:
+    """Accept only a nonempty set of the fixed review categories."""
+    if not isinstance(categories, (set, frozenset)) or not categories:
+        raise ValueError("Choose at least one valid category")
+    if not categories <= _CANDIDATE_CATEGORIES:
+        raise ValueError("Choose only available categories")
+    return frozenset(categories)
 
 
 def run_server_scan(
@@ -94,8 +103,11 @@ def run_server_scan(
     classify: Callable[..., Any] = classify_image,
     cancel_event: object | None = None,
     progress: Callable[[int, int], None] | None = None,
+    selected_categories: frozenset[str] = _CANDIDATE_CATEGORIES,
 ) -> ScanSummary:
     """Discover and classify images one at a time without exposing failures."""
+    selected_categories = validate_selected_categories(selected_categories)
+
     def cancelled() -> bool:
         return cancel_event is not None and bool(getattr(cancel_event, "is_set")())
 
@@ -110,10 +122,11 @@ def run_server_scan(
             failed,
             skipped_count,
             ScanFailureBreakdown(**failure_counts),
+            filtered,
         )
 
     candidates: list[ScanCandidate] = []
-    discovered = analyzed = ordinary = uncertain = failed = skipped_count = 0
+    discovered = analyzed = ordinary = uncertain = failed = skipped_count = filtered = 0
     failure_counts = {key: 0 for key in ScanFailureBreakdown.__dataclass_fields__}
     if cancelled():
         return summary(ScanState.CANCELLED)
@@ -144,7 +157,7 @@ def run_server_scan(
             failure_counts[kind if kind in failure_counts else "other"] += 1
         else:
             analyzed += 1
-            if decision.category in _CANDIDATE_CATEGORIES:
+            if decision.category in selected_categories:
                 candidates.append(
                     ScanCandidate(
                         path,
@@ -157,6 +170,8 @@ def run_server_scan(
                         prepared.thumbnail_height,
                     )
                 )
+            elif decision.category in _CANDIDATE_CATEGORIES:
+                filtered += 1
             elif decision.category == "uncertain":
                 uncertain += 1
             else:

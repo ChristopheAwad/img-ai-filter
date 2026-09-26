@@ -1,5 +1,7 @@
 .opencode/
 AGENTS.md
+feature.md
+roadmap.md
 .venv/
 __pycache__/
 .pytest_cache/
