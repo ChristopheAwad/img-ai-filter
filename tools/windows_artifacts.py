@@ -121,4 +121,5 @@ def write_checksums(artifacts: Iterable[Path], output: Path) -> None:
     contents = "".join(
         f"{digest}  {name}\n" for name, digest in sorted(entries)
     )
-    Path(output).write_text(contents, encoding="ascii")
+    with Path(output).open("w", encoding="ascii", newline="\n") as checksum_file:
+        checksum_file.write(contents)
