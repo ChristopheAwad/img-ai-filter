@@ -172,6 +172,38 @@ are written only in the selected quarantine folder. If startup fails, launch
 from a terminal and retain its error text. Portal or FUSE errors do not require
 root access; use the tarball fallback when FUSE is the problem.
 
+## Windows Test Package
+
+The Windows x86-64 test distribution includes Python, PySide6, Pillow, keyring,
+and the other Python runtime components. It does not include KoboldCpp, a GGUF
+vision model, or the matching `mmproj`. The build is not code-signed, so Windows
+SmartScreen may warn the first time you run the installer or the portable
+executable. Only continue if you obtained the file from the official release and
+its SHA-256 matches `SHA256SUMS`.
+
+Install for the current user without administrator rights:
+
+```powershell
+.\ImageFilter-0.3.0-windows-x86_64-setup.exe
+```
+
+Or extract the portable fallback and run it directly:
+
+```powershell
+Expand-Archive ImageFilter-0.3.0-windows-x86_64.zip
+.\ImageFilter-0.3.0-windows-x86_64\image-filter.exe
+```
+
+Verify the download from its folder with PowerShell. Compare each hash with the
+matching line in `SHA256SUMS`:
+
+```powershell
+Get-FileHash -Algorithm SHA256 ImageFilter-0.3.0-*
+```
+
+Windows updates are manual downloads. The app does not install Windows updates
+automatically.
+
 ## AppImage Updates
 
 Select **Check for Updates** when you want Image Filter to check its GitHub

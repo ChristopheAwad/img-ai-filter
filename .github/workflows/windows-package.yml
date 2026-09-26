@@ -1,0 +1,60 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install application, tests, and pinned packaging tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" -r packaging/windows/requirements.txt -c packaging/windows/runtime-constraints.txt
+      - name: Run network-blocked test suite
+        run: python -m pytest -q
+      - name: Download and verify Inno Setup
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile innosetup-6.7.3.exe
+          $actual = (Get-FileHash -Algorithm SHA256 innosetup-6.7.3.exe).Hash.ToLower()
+          if ($actual -ne "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732") {
+            throw "Inno Setup download failed verification"
+          }
+          $install = Start-Process -FilePath ".\innosetup-6.7.3.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Inno Setup install failed" }
+      - name: Build artifacts
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          python tools/build_windows.py --iscc "$iscc"
+      - name: Smoke test payload
+        run: .\packaging-build\dist\image-filter\image-filter.exe --smoke-test
+      - name: Verify artifact checksums
+        working-directory: packaging-build
+        run: |
+          foreach ($line in Get-Content SHA256SUMS-windows) {
+            $parts = $line -split "  ", 2
+            $actual = (Get-FileHash -Algorithm SHA256 $parts[1]).Hash.ToLower()
+            if ($actual -ne $parts[0]) { throw "Checksum mismatch: $($parts[1])" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImageFilter-windows-x86_64
+          path: |
+            packaging-build/*-setup.exe
+            packaging-build/*.zip
+            packaging-build/SHA256SUMS-windows
+          if-no-files-found: error

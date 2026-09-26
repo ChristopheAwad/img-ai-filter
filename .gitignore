@@ -10,6 +10,7 @@ dist/
 packaging-build/
 appimagetool
 appimage-runtime
+innosetup-*.exe
 sample-img/
 evaluation/data/
 evaluation/models/

@@ -1,0 +1,2 @@
+# Pinned Windows packaging tool. Inno Setup is installed by the workflow.
+pyinstaller==6.10.0
