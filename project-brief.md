@@ -61,6 +61,7 @@ Selecting a different folder clears results from the prior folder and enables a 
 - Install updates automatically only for a writable Linux x86-64 AppImage. Stream the complete file, require the exact GitHub SHA-256 asset digest, retain one recovery backup, and ask separately before download, installation, and restart.
 - Source and portable-tar launches may report update availability but never replace themselves. Existing AppImages require one final manual download to obtain updater support.
 - Publish version-tagged Linux releases through a tested draft-first workflow. Package metadata, tag, and artifact names must agree before publication.
+- Provide a per-user Windows x86-64 installer and a portable ZIP built from one PyInstaller payload, and publish them with the same version-tagged release as the Linux assets. Do not sign the Windows installer yet, and keep Windows updates as manual downloads.
 
 ## Deferred Decisions
 

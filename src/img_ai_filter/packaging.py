@@ -19,6 +19,13 @@ class ArtifactNames:
     payload_directory: str
 
 
+@dataclass(frozen=True)
+class WindowsArtifactNames:
+    installer: str
+    portable_zip: str
+    payload_directory: str
+
+
 def project_version(pyproject_path: Path) -> str:
     """Read a non-empty string project version from pyproject.toml."""
     try:
@@ -51,6 +58,27 @@ def artifact_names(
     return ArtifactNames(
         appimage=f"{stem}-x86_64.AppImage",
         tarball=f"{payload_directory}.tar.gz",
+        payload_directory=payload_directory,
+    )
+
+
+def windows_artifact_names(
+    version: str,
+    *,
+    system: str | None = None,
+    machine: str | None = None,
+) -> WindowsArtifactNames:
+    """Return release artifact names for the supported Windows target."""
+    system = platform.system() if system is None else system
+    machine = platform.machine() if machine is None else machine
+    if (system, machine) != ("Windows", "AMD64"):
+        raise ValueError("Windows artifacts support only Windows x86_64")
+
+    stem = f"ImageFilter-{version}"
+    payload_directory = f"{stem}-windows-x86_64"
+    return WindowsArtifactNames(
+        installer=f"{payload_directory}-setup.exe",
+        portable_zip=f"{payload_directory}.zip",
         payload_directory=payload_directory,
     )
 

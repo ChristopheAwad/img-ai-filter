@@ -1,0 +1,27 @@
+Image Filter Windows Test Distribution - Third-Party Notices
+
+This test distribution includes third-party software. The principal components
+and license families are listed below. Copyright remains with each project's
+contributors. Refer to the package projects for complete license text and terms.
+
+- CPython 3.11: Python Software Foundation License Version 2.
+  https://docs.python.org/3/license.html
+- PySide6 and Qt 6.11.2: LGPLv3/GPLv3 and commercial licensing options apply
+  according to the Qt for Python distribution terms.
+  https://doc.qt.io/qtforpython-6/licenses.html
+- Pillow 12.3.0: HPND License.
+  https://github.com/python-pillow/Pillow/blob/main/LICENSE
+- keyring 25.7.0: MIT License.
+  https://github.com/jaraco/keyring/blob/main/LICENSE
+- packaging 26.3: Apache License 2.0 or BSD 2-Clause License.
+  https://github.com/pypa/packaging/blob/main/LICENSE
+- certifi provides Mozilla CA certificates under the Mozilla Public License 2.0.
+  https://github.com/certifi/python-certifi/blob/master/LICENSE.md
+- PyInstaller 6.10.0 bootloader: GPLv2 with the PyInstaller bootloader exception.
+  https://pyinstaller.org/en/stable/license.html
+
+The bundle also contains transitive libraries used by these components. This
+notice is informational and does not replace their license terms.
+
+Inno Setup is used only as a build-time tool to create the installer. It is not
+included in this distribution.
