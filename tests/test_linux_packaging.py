@@ -44,7 +44,7 @@ def _certifi_pin() -> tuple[str, str]:
 
 
 def test_project_version_comes_from_pyproject() -> None:
-    assert project_version(ROOT / "pyproject.toml") == "0.3.0"
+    assert project_version(ROOT / "pyproject.toml") == "0.4.0"
 
 
 @pytest.mark.parametrize(
