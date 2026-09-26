@@ -25,7 +25,8 @@ def main() -> int:
     from img_ai_filter.packaging import project_version, windows_artifact_names
 
     try:
-        names = windows_artifact_names(project_version(root / "pyproject.toml"))
+        version = project_version(root / "pyproject.toml")
+        names = windows_artifact_names(version)
         iscc = args.iscc.resolve(strict=True)
         if not iscc.is_file():
             raise ValueError("--iscc must name an ISCC.exe file")
@@ -65,7 +66,7 @@ def main() -> int:
         subprocess.run(
             [
                 str(iscc),
-                f"/DAppVersion={project_version(root / 'pyproject.toml')}",
+                f"/DAppVersion={version}",
                 str(root / "packaging/windows/installer.iss"),
             ],
             cwd=root,

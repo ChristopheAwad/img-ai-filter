@@ -107,7 +107,9 @@ def test_create_windows_portable_zip_has_one_safe_top_level_directory(
     assert any(name.endswith("image-filter.exe") for name in names)
 
 
-@pytest.mark.parametrize("root_name", ["", ".", "..", "../escape", "/absolute", "a/b"])
+@pytest.mark.parametrize(
+    "root_name", ["", ".", "..", "../escape", "/absolute", "a/b", "C:"]
+)
 def test_create_windows_portable_zip_rejects_unsafe_root_name(
     tmp_path: Path, root_name: str
 ) -> None:

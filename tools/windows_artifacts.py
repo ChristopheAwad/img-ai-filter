@@ -76,6 +76,7 @@ def create_windows_portable_zip(payload: Path, output: Path, root_name: str) -> 
         or len(root.parts) != 1
         or "/" in root_name
         or "\\" in root_name
+        or ":" in root_name
     ):
         raise ValueError("root name must be one safe relative path component")
 

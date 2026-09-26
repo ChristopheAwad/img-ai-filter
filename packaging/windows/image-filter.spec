@@ -6,12 +6,10 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 project_root = Path(SPECPATH).parents[1]
 entry_point = project_root / "src/img_ai_filter/__main__.py"
 resource_dir = project_root / "src/img_ai_filter/resources"
-notices = project_root / "packaging/windows/THIRD_PARTY_NOTICES.txt"
 icon = project_root / "packaging/windows/ImageFilter.ico"
 
 datas = [
     (str(resource_dir), "img_ai_filter/resources"),
-    (str(notices), "."),
 ]
 datas += copy_metadata("img-ai-filter")
 datas += collect_data_files("keyring")
