@@ -19,6 +19,7 @@ from img_ai_filter.update_install import (
 from img_ai_filter.update_release import UpdateAsset, UpdateRelease
 from img_ai_filter.update_transport import VerifiedDownload
 from img_ai_filter.update_transport import UpdateCancelled, UpdateTransportError
+from img_ai_filter.update_windows import WindowsInstallation
 from img_ai_filter.window import CandidateSelectionSettingsDialog, MainWindow
 
 
@@ -63,6 +64,51 @@ def _release(data: bytes = b"new appimage", prerelease: bool = False) -> UpdateR
             size=len(data),
             url="https://github.com/ChristopheAwad/img-ai-filter/releases/download/file",
             sha256=hashlib.sha256(data).hexdigest(),
+        ),
+    )
+
+
+def _windows_release(kind: str = "zip", extra: bool = True) -> UpdateRelease:
+    from img_ai_filter.packaging import windows_artifact_names
+
+    version = Version("0.2.0")
+    names = windows_artifact_names("0.2.0", system="Windows", machine="AMD64")
+    wanted = names.portable_zip if kind == "zip" else names.installer
+    other = names.installer if kind == "zip" else names.portable_zip
+    data = b"windows payload"
+    asset = UpdateAsset(
+        name=wanted,
+        size=len(data),
+        url=f"https://github.com/ChristopheAwad/img-ai-filter/releases/download/v0.2.0/{wanted}",
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
+    extra_asset = None
+    if extra:
+        extra_asset = UpdateAsset(
+            name=other,
+            size=len(data),
+            url=f"https://github.com/ChristopheAwad/img-ai-filter/releases/download/v0.2.0/{other}",
+            sha256=hashlib.sha256(data).hexdigest(),
+        )
+    return UpdateRelease(
+        version=version,
+        prerelease=False,
+        notes="Windows changes.",
+        asset=asset,
+        extra_asset=extra_asset,
+    )
+
+
+def _windows_installation(path: Path, kind: str = "portable") -> WindowsInstallation:
+    file_stat = path.stat()
+    return WindowsInstallation(
+        path=path,
+        kind=kind,
+        identity=FileIdentity(
+            device=file_stat.st_dev,
+            inode=file_stat.st_ino,
+            size=file_stat.st_size,
+            mtime_ns=file_stat.st_mtime_ns,
         ),
     )
 
@@ -151,6 +197,7 @@ def test_available_update_outside_appimage_does_not_download(qtbot, monkeypatch)
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={},
+        update_platform="linux",
         check_update=lambda *args: release,
         download_update=lambda *args, **kwargs: downloads.append(args),
     )
@@ -217,6 +264,7 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={"APPIMAGE": str(current)},
+        update_platform="linux",
         check_update=lambda *args: release,
         download_update=download,
         install_update=install,
@@ -263,6 +311,7 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={"APPIMAGE": str(current)},
+        update_platform="linux",
         check_update=lambda *args: release,
     )
     qtbot.addWidget(window)
@@ -311,6 +360,7 @@ def test_declining_install_sets_terminal_status(qtbot, monkeypatch, tmp_path) ->
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={"APPIMAGE": str(current)},
+        update_platform="linux",
         check_update=lambda *args: release,
         download_update=download,
     )
@@ -454,3 +504,274 @@ def test_close_during_install_does_not_block_gui_thread(qtbot, monkeypatch) -> N
 
     window.closeEvent(Event())
     assert ignored == [True]
+
+
+def test_windows_source_run_shows_manual_message_without_appimage_text(
+    qtbot, monkeypatch
+) -> None:
+    release = _windows_release()
+    downloads: list[object] = []
+    boxes: list[QMessageBox] = []
+    opened: list[str] = []
+
+    def exec_box(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+        detect_windows_update=lambda: None,
+        open_update_url=opened.append,
+        check_update=lambda *args: release,
+        download_update=lambda *args, **kwargs: downloads.append(args),
+    )
+    qtbot.addWidget(window)
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: bool(boxes))
+
+    assert "0.2.0" in boxes[0].text()
+    assert "AppImage" not in boxes[0].text()
+    assert "AppImage" not in window.status_label.text()
+    assert ".zip" in boxes[0].text()
+    assert "setup" in boxes[0].text()
+    assert "SHA256SUMS" in boxes[0].text()
+    assert boxes[0].textFormat() == Qt.TextFormat.PlainText
+    assert downloads == []
+    assert opened == []
+
+
+def test_windows_manual_dialog_link_opens_releases_page(qtbot, monkeypatch) -> None:
+    release = _windows_release()
+    boxes: list[QMessageBox] = []
+    opened: list[str] = []
+
+    def exec_box(box):
+        boxes.append(box)
+        link = next(
+            button
+            for button in box.buttons()
+            if button.text() == "Open releases page"
+        )
+        link.click()
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+        detect_windows_update=lambda: None,
+        open_update_url=opened.append,
+        check_update=lambda *args: release,
+    )
+    qtbot.addWidget(window)
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: bool(boxes))
+
+    assert opened == [
+        "https://github.com/ChristopheAwad/img-ai-filter/releases/tag/v0.2.0"
+    ]
+
+
+def test_windows_portable_downloads_stages_and_restarts(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "ImageFilter-0.1.0-windows-x86_64"
+    app_dir.mkdir()
+    exe = app_dir / "image-filter.exe"
+    exe.write_bytes(b"old exe")
+    release = _windows_release(kind="zip")
+    stages: list[str] = []
+    scripts: list[str] = []
+
+    def download(asset, directory, cancel_event, progress):
+        stages.append("download")
+        assert asset.name.endswith(".zip")
+        data = b"windows payload"
+        path = directory / ".verified.zip"
+        path.write_bytes(data)
+        progress(len(data), len(data))
+        return VerifiedDownload(path, len(data), hashlib.sha256(data).hexdigest())
+
+    def stage(verified, target_dir):
+        stages.append("stage")
+        staging = target_dir.with_name(target_dir.name + ".update-staging")
+        staging.mkdir()
+        (staging / "image-filter.exe").write_bytes(b"new")
+        return staging
+
+    def run_script(script):
+        stages.append("run-script")
+        scripts.append(str(script))
+        return True
+
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+        detect_windows_update=lambda: _windows_installation(exe, "portable"),
+        check_update=lambda *args: release,
+        download_update=download,
+        stage_windows_update=stage,
+        run_restart_script=run_script,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "close", lambda: stages.append("close"))
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: "close" in stages)
+
+    assert stages == ["download", "stage", "run-script", "close"]
+    assert scripts[0].endswith(".update-apply.bat")
+
+
+def test_windows_installer_downloads_and_launches_setup(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "Image Filter"
+    app_dir.mkdir()
+    exe = app_dir / "image-filter.exe"
+    exe.write_bytes(b"old exe")
+    release = _windows_release(kind="setup")
+    stages: list[str] = []
+    launched: list[str] = []
+
+    def download(asset, directory, cancel_event, progress):
+        stages.append("download")
+        assert asset.name.endswith("-setup.exe")
+        data = b"windows payload"
+        path = directory / ".verified.exe"
+        path.write_bytes(data)
+        return VerifiedDownload(path, len(data), hashlib.sha256(data).hexdigest())
+
+    def launch(path):
+        launched.append(str(path))
+        return True
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Yes
+    )
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+        detect_windows_update=lambda: _windows_installation(exe, "installed"),
+        check_update=lambda *args: release,
+        download_update=download,
+        launch_installer_update=launch,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "close", lambda: stages.append("close"))
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: "close" in stages)
+
+    assert stages == ["download", "close"]
+    assert launched and launched[0].endswith(".verified.exe")
+    assert "installer was launched" in window.status_label.text().lower()
+
+
+def test_windows_installer_kind_with_only_zip_stays_manual(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "Image Filter"
+    app_dir.mkdir()
+    exe = app_dir / "image-filter.exe"
+    exe.write_bytes(b"old exe")
+    release = _windows_release(kind="zip", extra=False)
+    downloads: list[object] = []
+    boxes: list[QMessageBox] = []
+
+    def exec_box(box):
+        boxes.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_box)
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+        detect_windows_update=lambda: _windows_installation(exe, "installed"),
+        open_update_url=lambda url: None,
+        check_update=lambda *args: release,
+        download_update=lambda *args, **kwargs: downloads.append(args),
+    )
+    qtbot.addWidget(window)
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: bool(boxes))
+
+    assert downloads == []
+    assert "AppImage" not in boxes[0].text()
+    assert "matching file" in boxes[0].text()
+
+
+def test_windows_decline_download_sets_terminal_status(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    exe = app_dir / "image-filter.exe"
+    exe.write_bytes(b"old exe")
+    release = _windows_release(kind="zip")
+    downloads: list[object] = []
+
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.No
+    )
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+        detect_windows_update=lambda: _windows_installation(exe, "portable"),
+        check_update=lambda *args: release,
+        download_update=lambda *args, **kwargs: downloads.append(args),
+    )
+    qtbot.addWidget(window)
+
+    window.check_updates_action.trigger()
+    qtbot.waitUntil(lambda: window._update_thread is None)
+
+    assert window.status_label.text() == "Image Filter 0.2.0 was not downloaded."
+    assert downloads == []
+
+
+def test_windows_invalid_download_sets_terminal_status(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    exe = app_dir / "image-filter.exe"
+    exe.write_bytes(b"old exe")
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok
+    )
+    window = MainWindow(
+        settings_store=MemoryStore(),
+        application_version="0.1.0",
+        update_platform="win32",
+    )
+    qtbot.addWidget(window)
+    window._update_windows_installation = _windows_installation(exe, "portable")
+
+    window.status_label.setText("Downloading update...")
+    window._finish_windows_download(object())
+    assert window.status_label.text() == "The downloaded update could not be used."

@@ -9,11 +9,12 @@ from urllib.parse import unquote, urlsplit
 
 from packaging.version import InvalidVersion, Version
 
-from img_ai_filter.packaging import artifact_names
+from img_ai_filter.packaging import artifact_names, windows_artifact_names
 
 
 MAX_METADATA_BYTES = 1_000_000
 MAX_APPIMAGE_BYTES = 2_000_000_000
+MAX_WINDOWS_BYTES = 2_000_000_000
 _MAX_NOTES_CHARS = 20_000
 _NOTES_SUFFIX = "\n[Release notes truncated]"
 _SHA256 = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
@@ -41,6 +42,7 @@ class UpdateRelease:
     prerelease: bool
     notes: str
     asset: UpdateAsset
+    extra_asset: UpdateAsset | None = None
 
 
 def _canonical_version(value: object, *, prefixed: bool) -> Version:
@@ -89,7 +91,21 @@ def _asset(document: object, expected_name: str) -> UpdateAsset:
     return UpdateAsset(name=name, size=size, url=url, sha256=match.group(1).lower())
 
 
-def _release(document: object) -> UpdateRelease | None:
+def _expected_names(version: str, target: str) -> tuple[set[str], str]:
+    if target == "windows":
+        names = windows_artifact_names(
+            version, system="Windows", machine="AMD64"
+        )
+        return {names.portable_zip, names.installer}, names.portable_zip
+    if target == "linux":
+        expected = artifact_names(
+            version, system="Linux", machine="x86_64"
+        ).appimage
+        return {expected}, expected
+    raise UpdateMetadataError("Update target is invalid")
+
+
+def _release(document: object, target: str = "linux") -> UpdateRelease | None:
     if not isinstance(document, dict):
         raise UpdateMetadataError("Release must be an object")
     release_id = document.get("id")
@@ -106,13 +122,30 @@ def _release(document: object) -> UpdateRelease | None:
         raise UpdateMetadataError("Release channel does not match its tag")
     if draft:
         return None
-    expected_name = artifact_names(
-        str(version), system="Linux", machine="x86_64"
-    ).appimage
-    matching = [item for item in assets if isinstance(item, dict) and item.get("name") == expected_name]
-    if len(matching) != 1:
-        raise UpdateMetadataError("Release must have exactly one compatible AppImage")
-    selected_asset = _asset(matching[0], expected_name)
+    expected_names, preferred_name = _expected_names(str(version), target)
+    matching = [item for item in assets if isinstance(item, dict) and item.get("name") in expected_names]
+    if target == "windows":
+        if not matching:
+            raise UpdateMetadataError("Release has no compatible Windows asset")
+        # Prefer the portable ZIP so portable installs update directly;
+        # installer runs use the setup.exe asset when it is the only match
+        # or via the GUI install-kind dispatch.
+        preferred = [item for item in matching if item.get("name") == preferred_name]
+        chosen = preferred[0] if preferred else matching[0]
+        if len(matching) > 2 or sum(1 for item in matching if item.get("name") == chosen.get("name")) != 1:
+            raise UpdateMetadataError("Release must have exactly one compatible Windows asset per name")
+        selected_asset = _asset(chosen, str(chosen.get("name")))
+        extra_asset = None
+        others = [item for item in matching if item.get("name") != chosen.get("name")]
+        if others:
+            extra_asset = _asset(others[0], str(others[0].get("name")))
+        if len(notes) > _MAX_NOTES_CHARS:
+            notes = notes[: _MAX_NOTES_CHARS - len(_NOTES_SUFFIX)] + _NOTES_SUFFIX
+        return UpdateRelease(version, prerelease, notes, selected_asset, extra_asset)
+    else:
+        if len(matching) != 1:
+            raise UpdateMetadataError("Release must have exactly one compatible AppImage")
+        selected_asset = _asset(matching[0], preferred_name)
     if len(notes) > _MAX_NOTES_CHARS:
         notes = notes[: _MAX_NOTES_CHARS - len(_NOTES_SUFFIX)] + _NOTES_SUFFIX
     return UpdateRelease(version, prerelease, notes, selected_asset)
@@ -124,9 +157,12 @@ def select_update(
     installed_version: str,
     include_prereleases: bool,
     max_metadata_bytes: int = MAX_METADATA_BYTES,
+    target: str = "linux",
 ) -> UpdateRelease | None:
     """Return the highest compatible release newer than the installed version."""
     installed = _canonical_version(installed_version, prefixed=False)
+    if target not in {"linux", "windows"}:
+        raise UpdateMetadataError("Update target is invalid")
     if type(include_prereleases) is not bool:
         raise UpdateMetadataError("Release channel must be boolean")
     if not isinstance(body, bytes) or not body or len(body) > max_metadata_bytes:
@@ -150,7 +186,7 @@ def select_update(
         ):
             continue
         try:
-            release = _release(item)
+            release = _release(item, target)
         except (UpdateMetadataError, ValueError):
             errors += 1
             continue

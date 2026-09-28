@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 from importlib.metadata import version as package_version
 import os
 from pathlib import Path
+import sys
 from threading import Event
 import time
 from typing import Any
 
-from PySide6.QtCore import QEvent, QSettings, QSize, QTimer, Qt
-from PySide6.QtGui import QAction, QIcon, QImage, QPalette, QPixmap
+from PySide6.QtCore import QEvent, QSettings, QSize, QTimer, Qt, QUrl
+from PySide6.QtGui import QAction, QIcon, QImage, QPalette, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
     QAbstractItemView,
@@ -110,6 +111,16 @@ from img_ai_filter.update_transport import (
     download_appimage,
     fetch_release_metadata,
 )
+from img_ai_filter.update_windows import (
+    WindowsInstallation,
+    build_portable_restart_script,
+    detect_windows_installation,
+    download_windows_asset,
+    launch_windows_installer,
+    releases_tag_url,
+    stage_portable_zip,
+)
+from img_ai_filter.packaging import windows_artifact_names
 from img_ai_filter.vision_connection import VisionConnectionError, discover_koboldcpp
 
 
@@ -128,15 +139,38 @@ def _application_version() -> str:
 
 def _check_update(version: str, include: bool, cancel_event: Event) -> UpdateRelease | None:
     metadata = fetch_release_metadata(cancel_event=cancel_event)
+    target = "windows" if sys.platform == "win32" else "linux"
     return select_update(
-        metadata, installed_version=version, include_prereleases=include
+        metadata,
+        installed_version=version,
+        include_prereleases=include,
+        target=target,
     )
 
 
 def _download_update(asset, directory: Path, cancel_event: Event, progress):
+    name = getattr(asset, "name", "")
+    if isinstance(name, str) and name.endswith((".zip", ".exe")):
+        return download_windows_asset(
+            asset, directory=directory, cancel_event=cancel_event, progress=progress
+        )
     return download_appimage(
         asset, directory=directory, cancel_event=cancel_event, progress=progress
     )
+
+
+def _open_releases_page(url: str) -> None:
+    QDesktopServices.openUrl(QUrl(url))
+
+
+def _run_restart_batch(script: Path) -> bool:
+    import subprocess
+
+    try:
+        subprocess.Popen(f'"{script}"', shell=True)
+    except Exception:
+        return False
+    return True
 
 
 def _update_message(parent, icon: QMessageBox.Icon, text: str) -> None:
@@ -449,6 +483,12 @@ class MainWindow(QMainWindow):
         download_update: Callable[..., Any] = _download_update,
         install_update: Callable[..., Any] = install_appimage,
         restart_update: Callable[..., Any] = restart_appimage,
+        update_platform: str | None = None,
+        detect_windows_update: Callable[[], Any] | None = None,
+        open_update_url: Callable[[str], Any] | None = None,
+        stage_windows_update: Callable[..., Any] | None = None,
+        launch_installer_update: Callable[..., Any] | None = None,
+        run_restart_script: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__()
         self._scan = scan
@@ -470,6 +510,18 @@ class MainWindow(QMainWindow):
         self._download_update = download_update
         self._install_update = install_update
         self._restart_update = restart_update
+        self._update_platform = update_platform or sys.platform
+        self._detect_windows_update = (
+            detect_windows_update or (lambda: detect_windows_installation())
+        )
+        self._open_update_url = open_update_url or _open_releases_page
+        self._stage_windows_update = stage_windows_update or stage_portable_zip
+        self._launch_installer_update = (
+            launch_installer_update or launch_windows_installer
+        )
+        self._run_restart_script = run_restart_script or _run_restart_batch
+        self._update_windows_installation: WindowsInstallation | None = None
+        self._update_asset_name: str | None = None
         self._include_test_releases = load_include_test_releases(self._settings_store)
         self._update_thread: OperationThread | None = None
         self._update_cancel_event: Event | None = None
@@ -1530,6 +1582,11 @@ class MainWindow(QMainWindow):
                 self._remove_verified_download(self._verified_update)
                 self._verified_update = None
                 self._update_installation = None
+            if kind == "install_windows":
+                self._remove_verified_download(self._verified_update)
+                self._verified_update = None
+                self._update_windows_installation = None
+                self._update_asset_name = None
             self.status_label.setText(message)
             _update_message(self, QMessageBox.Icon.Warning, message)
             self._update_controls()
@@ -1540,6 +1597,8 @@ class MainWindow(QMainWindow):
             self._finish_update_download(result)
         elif kind == "install":
             self._finish_update_install(result)
+        elif kind == "install_windows":
+            self._finish_windows_install(result)
         self._update_controls()
 
     def _finish_update_check(self, release: Any) -> None:
@@ -1558,6 +1617,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.Icon.Warning,
                 "The update information could not be used.",
             )
+            return
+        if self._update_platform == "win32":
+            self._finish_windows_update_check(release)
             return
         installation = detect_appimage_installation(self._update_environment)
         if installation is None:
@@ -1608,6 +1670,142 @@ class MainWindow(QMainWindow):
 
         self._start_update_operation("download", operation)
 
+    def _windows_release_names(self, release: UpdateRelease) -> tuple[str, str]:
+        try:
+            names = windows_artifact_names(
+                str(release.version), system="Windows", machine="AMD64"
+            )
+        except ValueError:
+            asset = release.asset.name
+            return asset, asset
+        return names.portable_zip, names.installer
+
+    def _windows_asset_for_kind(self, release: UpdateRelease, kind: str) -> Any:
+        candidates = [release.asset]
+        if release.extra_asset is not None:
+            candidates.append(release.extra_asset)
+        if kind == "installed":
+            for asset in candidates:
+                if asset.name.endswith("-setup.exe"):
+                    return asset
+        else:
+            for asset in candidates:
+                if asset.name.endswith(".zip"):
+                    return asset
+        return None
+
+    def _update_link_box(
+        self, title: str, icon: QMessageBox.Icon, text: str, tag_url: str
+    ) -> None:
+        box = QMessageBox(self)
+        box.setIcon(icon)
+        box.setWindowTitle(title)
+        box.setText(f"{text}\n\nReleases page:\n{tag_url}")
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        link_button = box.addButton(
+            "Open releases page", QMessageBox.ButtonRole.ActionRole
+        )
+        link_button.clicked.connect(lambda _checked=False: self._open_update_url(tag_url))
+        box.exec()
+
+    def _finish_windows_update_check(self, release: UpdateRelease) -> None:
+        zip_name, setup_name = self._windows_release_names(release)
+        tag_url = releases_tag_url(str(release.version))
+        installation = self._detect_windows_update()
+        if not isinstance(installation, WindowsInstallation):
+            self.status_label.setText(
+                f"Image Filter {release.version} is available. Windows updates "
+                f"are manual downloads: get {zip_name} or {setup_name} from "
+                "the releases page and check SHA256SUMS."
+            )
+            channel = "test" if release.prerelease else "stable"
+            self._update_link_box(
+                "Update available",
+                QMessageBox.Icon.Information,
+                f"Image Filter {release.version} ({channel}) is available.\n\n"
+                f"{release.notes}\n\n"
+                "This copy cannot install the update itself. Download "
+                f"{zip_name} for portable use or {setup_name} for the "
+                "per-user installer from the GitHub releases page, then "
+                "check its SHA-256 against SHA256SUMS. The update check "
+                "already shared your IP address and request timing with GitHub.",
+                tag_url,
+            )
+            return
+        asset = self._windows_asset_for_kind(release, installation.kind)
+        if asset is None:
+            self.status_label.setText(
+                f"Image Filter {release.version} is available. Windows updates "
+                f"are manual downloads: get {zip_name} or {setup_name} from "
+                "the releases page and check SHA256SUMS."
+            )
+            self._update_link_box(
+                "Update available",
+                QMessageBox.Icon.Information,
+                f"Image Filter {release.version} is available, but this "
+                f"{installation.kind} copy needs the matching file "
+                f"({zip_name} or {setup_name}). Download it from the GitHub "
+                "releases page and check its SHA-256 against SHA256SUMS.",
+                tag_url,
+            )
+            return
+        channel = "test" if release.prerelease else "stable"
+        text = (
+            f"Image Filter {release.version} ({channel}) is available.\n"
+            f"File: {asset.name}\n"
+            f"Download size: {asset.size} bytes.\n\n"
+            f"{release.notes}\n\n"
+            "Checking and downloading contacts GitHub and shares your IP address with GitHub. Download this update?"
+        )
+        answer = self._windows_question(text, tag_url)
+        if answer != QMessageBox.StandardButton.Yes:
+            self.status_label.setText(
+                f"Image Filter {release.version} was not downloaded."
+            )
+            return
+        self._update_windows_installation = installation
+        self._update_asset_name = asset.name
+        cancel_event = Event()
+        self._update_cancel_event = cancel_event
+        self.status_label.setText("Downloading update...")
+
+        def operation(progress: Callable[[int, int], None]) -> Any:
+            return self._download_update(
+                asset,
+                installation.path.parent,
+                cancel_event,
+                progress,
+            )
+
+        self._start_update_operation("download", operation)
+
+    def _windows_question(self, text: str, tag_url: str) -> Any:
+        for _ in range(3):
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle("Update available")
+            box.setText(text)
+            box.setTextFormat(Qt.TextFormat.PlainText)
+            box.setStandardButtons(
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            box.setDefaultButton(QMessageBox.StandardButton.No)
+            link_button = box.addButton(
+                "Open releases page", QMessageBox.ButtonRole.ActionRole
+            )
+            link_button.clicked.connect(
+                lambda _checked=False: self._open_update_url(tag_url)
+            )
+            answer = box.exec()
+            if answer in (
+                QMessageBox.StandardButton.Yes,
+                QMessageBox.StandardButton.No,
+            ):
+                return answer
+            continue
+        return QMessageBox.StandardButton.No
+
     @staticmethod
     def _remove_verified_download(download: Any) -> None:
         if not isinstance(download, VerifiedDownload):
@@ -1618,6 +1816,11 @@ class MainWindow(QMainWindow):
             pass
 
     def _finish_update_download(self, download: Any) -> None:
+        if self._update_platform == "win32" and (
+            self._update_windows_installation is not None or self._update_asset_name
+        ):
+            self._finish_windows_download(download)
+            return
         if not isinstance(download, VerifiedDownload) or self._update_installation is None:
             self._remove_verified_download(download)
             self.status_label.setText("The downloaded update could not be used.")
@@ -1667,6 +1870,115 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         if self._restart_update(result.path):
+            self.close()
+        else:
+            _update_message(
+                self, QMessageBox.Icon.Warning, "Image Filter could not be restarted."
+            )
+
+    def _finish_windows_download(self, download: Any) -> None:
+        installation = self._update_windows_installation
+        if not isinstance(download, VerifiedDownload) or installation is None:
+            self._remove_verified_download(download)
+            self._update_windows_installation = None
+            self._update_asset_name = None
+            self.status_label.setText("The downloaded update could not be used.")
+            _update_message(
+                self, QMessageBox.Icon.Warning, "The downloaded update could not be used."
+            )
+            return
+        self._verified_update = download
+        if installation.kind == "installed":
+            answer = QMessageBox.question(
+                self,
+                "Run installer?",
+                "The update was downloaded and verified. Close Image Filter and run the installer now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self._remove_verified_download(download)
+                self._verified_update = None
+                self._update_windows_installation = None
+                self._update_asset_name = None
+                self.status_label.setText("The update was downloaded but not installed.")
+                return
+            if self._launch_installer_update(download.path):
+                self.status_label.setText(
+                    "The installer was launched. Close Image Filter to complete the update."
+                )
+                self._update_windows_installation = None
+                self._update_asset_name = None
+                self.close()
+            else:
+                self.status_label.setText(
+                    "The installer could not be started. Run the downloaded file manually."
+                )
+                _update_message(
+                    self,
+                    QMessageBox.Icon.Warning,
+                    "The installer could not be started. Run the downloaded file manually.",
+                )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Install update?",
+            "The update was downloaded and verified. Install it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._remove_verified_download(download)
+            self._verified_update = None
+            self._update_windows_installation = None
+            self._update_asset_name = None
+            self.status_label.setText("The update was downloaded but not installed.")
+            return
+        self.status_label.setText("Installing update...")
+
+        def operation(progress: Callable[[int, int], None]) -> Any:
+            app_dir = installation.path.parent
+            staging = self._stage_windows_update(download, app_dir)
+            script = app_dir.with_name(
+                app_dir.name + ".update-apply.bat"
+            )
+            try:
+                build_portable_restart_script(
+                    app_dir=app_dir, staging_dir=staging, script_path=script
+                )
+            except Exception:
+                raise
+            return (staging, script)
+
+        self._start_update_operation("install_windows", operation)
+
+    def _finish_windows_install(self, result: Any) -> None:
+        installation = self._update_windows_installation
+        self._verified_update = None
+        self._update_windows_installation = None
+        self._update_asset_name = None
+        if (
+            not isinstance(result, tuple)
+            or len(result) != 2
+            or installation is None
+        ):
+            self.status_label.setText("The installed update could not be verified.")
+            _update_message(
+                self, QMessageBox.Icon.Warning, "The installed update could not be verified."
+            )
+            return
+        _staging, script = result
+        self.status_label.setText("The update was staged.")
+        answer = QMessageBox.question(
+            self,
+            "Restart Image Filter?",
+            "The update was staged. Restart Image Filter now to finish the update?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self._run_restart_script(script):
             self.close()
         else:
             _update_message(
