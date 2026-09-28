@@ -237,3 +237,149 @@ def test_selected_asset_uses_exact_packaging_name() -> None:
     assert result is not None
     assert result.asset.name == "ImageFilter-0.2.0-x86_64.AppImage"
     assert result.asset.url.startswith("https://github.com/")
+
+
+def _win_asset(version: str = "0.2.0", kind: str = "zip", **changes) -> dict[str, object]:
+    from img_ai_filter.packaging import windows_artifact_names
+
+    names = windows_artifact_names(version, system="Windows", machine="AMD64")
+    name = names.portable_zip if kind == "zip" else names.installer
+    asset: dict[str, object] = {
+        "name": name,
+        "size": 2048,
+        "browser_download_url": (
+            "https://github.com/ChristopheAwad/img-ai-filter/releases/download/"
+            f"v{version}/{name}"
+        ),
+        "digest": "sha256:" + "b" * 64,
+    }
+    asset.update(changes)
+    return asset
+
+
+def _win_release(version: str = "0.2.0", assets: list | None = None, **changes) -> dict[str, object]:
+    release: dict[str, object] = {
+        "id": 456,
+        "tag_name": f"v{version}",
+        "draft": False,
+        "prerelease": "b" in version,
+        "body": "Windows changes.",
+        "assets": assets if assets is not None else [_win_asset(version)],
+    }
+    release.update(changes)
+    return release
+
+
+def test_windows_zip_only_is_selected() -> None:
+    result = select_update(
+        _body(_win_release("0.2.0")),
+        installed_version="0.1.0",
+        include_prereleases=False,
+        target="windows",
+    )
+    assert result is not None
+    assert result.asset.name == "ImageFilter-0.2.0-windows-x86_64.zip"
+
+
+def test_windows_setup_only_is_selected() -> None:
+    result = select_update(
+        _body(_win_release("0.2.0", assets=[_win_asset("0.2.0", kind="setup")])),
+        installed_version="0.1.0",
+        include_prereleases=False,
+        target="windows",
+    )
+    assert result is not None
+    assert result.asset.name.endswith("-setup.exe")
+
+
+def test_windows_both_assets_prefers_zip() -> None:
+    result = select_update(
+        _body(
+            _win_release(
+                "0.2.0",
+                assets=[_win_asset("0.2.0", kind="setup"), _win_asset("0.2.0", kind="zip")],
+            )
+        ),
+        installed_version="0.1.0",
+        include_prereleases=False,
+        target="windows",
+    )
+    assert result is not None
+    assert result.asset.name.endswith(".zip")
+    assert result.extra_asset is not None
+    assert result.extra_asset.name.endswith("-setup.exe")
+
+
+def test_windows_ignores_linux_only_release() -> None:
+    with pytest.raises(UpdateMetadataError):
+        select_update(
+            _body(_release("0.2.0")),
+            installed_version="0.1.0",
+            include_prereleases=False,
+            target="windows",
+        )
+
+
+def test_linux_ignores_windows_only_release() -> None:
+    with pytest.raises(UpdateMetadataError):
+        select_update(
+            _body(_win_release("0.2.0")),
+            installed_version="0.1.0",
+            include_prereleases=False,
+            target="linux",
+        )
+
+
+def test_windows_stable_ignores_prerelease() -> None:
+    result = select_update(
+        _body(_win_release("0.3.0b1"), _win_release("0.2.0")),
+        installed_version="0.1.0",
+        include_prereleases=False,
+        target="windows",
+    )
+    assert result is not None
+    assert str(result.version) == "0.2.0"
+
+
+def test_windows_test_channel_selects_highest() -> None:
+    result = select_update(
+        _body(_win_release("0.2.0"), _win_release("0.10.0b1")),
+        installed_version="0.1.0",
+        include_prereleases=True,
+        target="windows",
+    )
+    assert result is not None
+    assert str(result.version) == "0.10.0b1"
+
+
+def test_windows_equal_version_is_none() -> None:
+    assert (
+        select_update(
+            _body(_win_release("0.2.0")),
+            installed_version="0.2.0",
+            include_prereleases=False,
+            target="windows",
+        )
+        is None
+    )
+
+
+def test_windows_invalid_target_is_rejected() -> None:
+    with pytest.raises(UpdateMetadataError):
+        select_update(
+            _body(_win_release()),
+            installed_version="0.1.0",
+            include_prereleases=False,
+            target="macos",
+        )
+
+
+def test_windows_duplicate_asset_names_are_rejected() -> None:
+    asset = _win_asset()
+    with pytest.raises(UpdateMetadataError):
+        select_update(
+            _body(_win_release("0.2.0", assets=[asset, dict(asset)])),
+            installed_version="0.1.0",
+            include_prereleases=False,
+            target="windows",
+        )

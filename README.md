@@ -205,8 +205,37 @@ matching line in `SHA256SUMS`:
 Get-FileHash -Algorithm SHA256 ImageFilter-0.5.0-*
 ```
 
-Windows updates are manual downloads. The app does not install Windows updates
-automatically.
+## Windows Updates
+
+Select **Check for Updates** when you want Image Filter to check its GitHub
+releases. The app does not check at startup or on a timer. The request gives
+GitHub and its download infrastructure your IP address and request timing. It
+does not send images, image paths, KoboldCpp settings, credentials, activity
+history, or a machine identifier.
+
+Stable releases are checked by default. **Settings** can include test releases.
+
+On Windows the app looks for the Windows ZIP and installer assets, not the
+Linux AppImage. When a newer version is available it shows the version,
+channel, notes, file name, and size before download. It streams the file to
+the install folder, verifies GitHub's SHA-256 release digest, and asks again
+before installation.
+
+- Portable ZIP: the app stages the verified ZIP next to the install folder,
+  asks before restart, then swaps the folders with a helper script after the
+  app closes. It keeps the previous folder as `<folder name>.backup`. To
+  recover manually, close Image Filter, move the new folder aside, and rename
+  the `.backup` folder to the original name.
+- Per-user installer: the app downloads the verified `setup.exe` and asks
+  before running the installer. Close Image Filter so the installer can
+  replace the files.
+
+Copies that cannot replace themselves, such as a source checkout, only report
+availability. They name both Windows files and link the releases page so you
+can download manually and check the hash against `SHA256SUMS`. The build is
+not code-signed, so Windows SmartScreen may warn the first time you run the
+installer or a new portable executable. Only continue if you obtained the file
+from the official release and its SHA-256 matches `SHA256SUMS`.
 
 ## AppImage Updates
 
@@ -230,7 +259,8 @@ account.
 
 Automatic installation works only when the app runs from a writable AppImage.
 Source and portable-tar launches can check availability but do not replace
-themselves. The first updater-enabled AppImage must be downloaded manually once;
+themselves. On Windows the same **Check for Updates** action looks for the
+Windows ZIP and installer assets instead; see Windows Updates above. The first updater-enabled AppImage must be downloaded manually once;
 later AppImages can replace themselves. To recover manually, close Image Filter,
 move the current AppImage aside, rename its `.backup` file to the original name,
 and ensure it is executable.
