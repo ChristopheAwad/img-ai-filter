@@ -992,7 +992,7 @@ class MainWindow(QMainWindow):
 
         try:
             transport = self._transport_factory()
-        except Exception as error:
+        except Exception:
             self._config = None
             self.connection_label.setText("The connection test could not start.")
             self._update_controls()

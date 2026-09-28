@@ -179,3 +179,22 @@ def test_m2_failed_record_write_failure_stays_failed_and_intact(tmp_path, monkey
     assert summary.outcomes[0].status == MoveStatus.FAILED
     assert (src / "a.png").read_bytes() == b"changed-after-scan"
     assert not (q / "a.png").exists()
+
+
+def test_progress_callback_failure_does_not_abort_the_move(tmp_path):
+    src, q = _roots(tmp_path)
+    _file(src / "a.png", b"aaa")
+    _file(src / "b.png", b"bbb")
+    plan = build_quarantine_plan(
+        src, q, [_candidate(src / "a.png"), _candidate(src / "b.png")]
+    )
+
+    def bad_progress(done, total):
+        raise ZeroDivisionError("progress defect")
+
+    summary = execute_quarantine_plan(plan, progress=bad_progress)
+
+    assert summary.moved_count == 2
+    assert [o.status for o in summary.outcomes] == [MoveStatus.MOVED, MoveStatus.MOVED]
+    assert not (src / "a.png").exists()
+    assert not (src / "b.png").exists()

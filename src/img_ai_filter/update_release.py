@@ -81,7 +81,7 @@ def _asset(document: object, expected_name: str) -> UpdateAsset:
         or parsed.fragment
     ):
         raise UpdateMetadataError("AppImage URL is invalid")
-    if unquote(parsed.path).split("/")[-1] != expected_name:
+    if unquote(parsed.path.split("/")[-1]) != expected_name:
         raise UpdateMetadataError("AppImage URL is invalid")
     match = _SHA256.fullmatch(digest) if isinstance(digest, str) else None
     if match is None:

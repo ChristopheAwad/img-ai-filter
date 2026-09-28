@@ -47,6 +47,16 @@ def test_m7_asset_url_must_name_the_expected_file():
         select_update(body, installed_version="0.1.0", include_prereleases=False)
 
 
+def test_m7_encoded_slash_in_asset_url_is_rejected():
+    tricky_url = (
+        "https://github.com/ChristopheAwad/img-ai-filter/releases/download/"
+        "v0.2.0/evil%2FImageFilter-0.2.0-x86_64.AppImage"
+    )
+    body = json.dumps([_release_doc("0.2.0", url=tricky_url)]).encode()
+    with pytest.raises(UpdateMetadataError, match="no usable releases|URL is invalid"):
+        select_update(body, installed_version="0.1.0", include_prereleases=False)
+
+
 def test_m7_uppercase_digest_is_accepted_and_normalized():
     digest = "sha256:" + "B" * 64
     body = json.dumps([_release_doc("0.2.0", digest=digest)]).encode()
