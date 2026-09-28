@@ -157,16 +157,16 @@ you did not download.
 To use the AppImage:
 
 ```bash
-chmod +x ImageFilter-0.5.0-x86_64.AppImage
-./ImageFilter-0.5.0-x86_64.AppImage
+chmod +x ImageFilter-0.6.0-x86_64.AppImage
+./ImageFilter-0.6.0-x86_64.AppImage
 ```
 
 If AppImage mounting is unavailable, extract the fallback without installing
 Python or FUSE:
 
 ```bash
-tar -xzf ImageFilter-0.5.0-linux-x86_64.tar.gz
-./ImageFilter-0.5.0-linux-x86_64/image-filter
+tar -xzf ImageFilter-0.6.0-linux-x86_64.tar.gz
+./ImageFilter-0.6.0-linux-x86_64/image-filter
 ```
 
 The package still needs a normal Linux desktop, graphics drivers, display
@@ -188,21 +188,21 @@ its SHA-256 matches `SHA256SUMS`.
 Install for the current user without administrator rights:
 
 ```powershell
-.\ImageFilter-0.5.0-windows-x86_64-setup.exe
+.\ImageFilter-0.6.0-windows-x86_64-setup.exe
 ```
 
 Or extract the portable fallback and run it directly:
 
 ```powershell
-Expand-Archive ImageFilter-0.5.0-windows-x86_64.zip
-.\ImageFilter-0.5.0-windows-x86_64\image-filter.exe
+Expand-Archive ImageFilter-0.6.0-windows-x86_64.zip
+.\ImageFilter-0.6.0-windows-x86_64\image-filter.exe
 ```
 
 Verify the download from its folder with PowerShell. Compare each hash with the
 matching line in `SHA256SUMS`:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 ImageFilter-0.5.0-*
+Get-FileHash -Algorithm SHA256 ImageFilter-0.6.0-*
 ```
 
 ## Windows Updates
