@@ -197,6 +197,7 @@ def test_available_update_outside_appimage_does_not_download(qtbot, monkeypatch)
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={},
+        update_platform="linux",
         check_update=lambda *args: release,
         download_update=lambda *args, **kwargs: downloads.append(args),
     )
@@ -263,6 +264,7 @@ def test_appimage_update_downloads_installs_and_restarts_after_confirmations(
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={"APPIMAGE": str(current)},
+        update_platform="linux",
         check_update=lambda *args: release,
         download_update=download,
         install_update=install,
@@ -309,6 +311,7 @@ def test_update_notes_are_rendered_as_plain_text(qtbot, monkeypatch, tmp_path) -
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={"APPIMAGE": str(current)},
+        update_platform="linux",
         check_update=lambda *args: release,
     )
     qtbot.addWidget(window)
@@ -357,6 +360,7 @@ def test_declining_install_sets_terminal_status(qtbot, monkeypatch, tmp_path) ->
         settings_store=MemoryStore(),
         application_version="0.1.0",
         update_environment={"APPIMAGE": str(current)},
+        update_platform="linux",
         check_update=lambda *args: release,
         download_update=download,
     )
