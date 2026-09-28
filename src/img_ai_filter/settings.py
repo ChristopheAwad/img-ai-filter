@@ -16,11 +16,11 @@ from enum import Enum, auto
 import os
 from pathlib import Path
 import re
+import tempfile
 from typing import Any
 
 from img_ai_filter.endpoint import (
     EndpointConfig,
-    EndpointValidationError,
     VisionEndpointConfig,
     build_endpoint_config,
     build_vision_endpoint_config,
@@ -159,8 +159,11 @@ def load_endpoint_settings(
     resolver: Callable[[str], Sequence[str]] | None = None,
 ) -> EndpointSettings:
     """Load and validate the stored endpoint URL and model name."""
-    url = store.read(ENDPOINT_URL_KEY)
-    model = store.read(ENDPOINT_MODEL_KEY)
+    try:
+        url = store.read(ENDPOINT_URL_KEY)
+        model = store.read(ENDPOINT_MODEL_KEY)
+    except Exception:
+        return EndpointSettings(SettingsStatus.NEEDS_REPAIR, None)
 
     if url is None and model is None:
         return EndpointSettings(SettingsStatus.UNCONFIGURED, None)
@@ -169,7 +172,7 @@ def load_endpoint_settings(
 
     try:
         config = build_endpoint_config(url, model, resolver=resolver)
-    except EndpointValidationError:
+    except Exception:
         return EndpointSettings(SettingsStatus.NEEDS_REPAIR, None)
 
     return EndpointSettings(SettingsStatus.READY, config)
@@ -187,8 +190,11 @@ def load_vision_endpoint_settings(
     resolver: Callable[[str], Sequence[str]] | None = None,
 ) -> VisionEndpointSettings:
     """Load and validate a stored KoboldCpp base URL and discovered model."""
-    url = store.read(ENDPOINT_URL_KEY)
-    model = store.read(ENDPOINT_MODEL_KEY)
+    try:
+        url = store.read(ENDPOINT_URL_KEY)
+        model = store.read(ENDPOINT_MODEL_KEY)
+    except Exception:
+        return VisionEndpointSettings(SettingsStatus.NEEDS_REPAIR, None)
     if url is None and model is None:
         return VisionEndpointSettings(SettingsStatus.UNCONFIGURED, None)
     if url is None or model is None:
@@ -196,7 +202,7 @@ def load_vision_endpoint_settings(
 
     try:
         config = build_vision_endpoint_config(url, model, resolver=resolver)
-    except EndpointValidationError:
+    except Exception:
         return VisionEndpointSettings(SettingsStatus.NEEDS_REPAIR, None)
     if not config.model:
         return VisionEndpointSettings(SettingsStatus.NEEDS_REPAIR, None)
@@ -292,14 +298,42 @@ class IniSettingsStore:
             return None
         return parser.get(_SECTION, key)
 
+    def _store(self, parser: configparser.ConfigParser) -> None:
+        """Persist atomically: temp file + fsync + rename, never truncate live data."""
+        directory = self.path.parent
+        fd, tmp_name = tempfile.mkstemp(
+            dir=directory, prefix=self.path.name + ".", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                parser.write(file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(tmp_name, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+        try:
+            dir_fd = os.open(directory, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(dir_fd)
+
     def write(self, key: str, value: str) -> None:
         """Store value for key, preserving any other keys already present."""
         parser = self._load()
         if not parser.has_section(_SECTION):
             parser.add_section(_SECTION)
         parser.set(_SECTION, key, value)
-        with open(self.path, "w", encoding="utf-8") as file:
-            parser.write(file)
+        self._store(parser)
 
     def delete(self, key: str) -> None:
         """Remove key while preserving every other stored key."""
@@ -307,8 +341,7 @@ class IniSettingsStore:
         if not parser.has_section(_SECTION) or not parser.has_option(_SECTION, key):
             return None
         parser.remove_option(_SECTION, key)
-        with open(self.path, "w", encoding="utf-8") as file:
-            parser.write(file)
+        self._store(parser)
 
 
 QUARANTINE_FOLDER_KEY = "quarantine_folder"

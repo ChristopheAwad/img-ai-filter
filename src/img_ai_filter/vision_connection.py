@@ -50,17 +50,23 @@ def _request_json_object(
             read_timeout=_DISCOVERY_READ_TIMEOUT,
             max_response_bytes=KOBOLDCPP_DISCOVERY_MAX_BYTES,
         )
+    except (TypeError, AttributeError):
+        raise
     except Exception:
         raise VisionConnectionError(_UNREACHABLE_ERROR) from None
 
     if response.status != 200:
         raise VisionConnectionError(f"The KoboldCpp {request_name} request failed")
+    if not isinstance(response.body, (bytes, bytearray)):
+        raise VisionConnectionError(
+            "The KoboldCpp server returned an invalid response"
+        )
     if len(response.body) > KOBOLDCPP_DISCOVERY_MAX_BYTES:
         raise VisionConnectionError("The KoboldCpp response is too large")
 
     try:
         payload = json.loads(response.body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
         raise VisionConnectionError(
             "The KoboldCpp server returned an invalid response"
         ) from None

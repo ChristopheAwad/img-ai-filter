@@ -8,6 +8,7 @@ import hashlib
 from io import BytesIO
 import os
 from pathlib import Path
+import stat
 import warnings
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -90,11 +91,25 @@ def _read_bounded(path: Path) -> bytes:
             raise ImagePayloadError("Symbolic links are not supported")
         if not path.is_file():
             raise ImagePayloadError("The selected image is not a file")
-        size = path.stat().st_size
-        if size > MAX_INPUT_BYTES:
-            raise ImagePayloadError("The image file is too large")
-        with path.open("rb") as source:
-            data = source.read(MAX_INPUT_BYTES + 1)
+        # Open without following links so a swap between the checks above and
+        # the open cannot redirect the read; then verify the open file itself.
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError:
+            raise ImagePayloadError("The selected image is not a readable file") from None
+        try:
+            opened_stat = os.fstat(descriptor)
+            if stat.S_ISLNK(opened_stat.st_mode) or not stat.S_ISREG(opened_stat.st_mode):
+                raise ImagePayloadError("The selected image is not a file")
+            if opened_stat.st_size > MAX_INPUT_BYTES:
+                raise ImagePayloadError("The image file is too large")
+            with os.fdopen(descriptor, "rb") as source:
+                descriptor = -1
+                data = source.read(MAX_INPUT_BYTES + 1)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
     except ImagePayloadError:
         raise
     except (OSError, ValueError, TypeError):

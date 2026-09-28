@@ -7,6 +7,8 @@ import ssl
 import threading
 import urllib.parse
 
+import certifi
+
 from .vision_connection import TransportResponse
 
 
@@ -38,6 +40,15 @@ class StandardHttpTransport:
         cancel_event: object | None = None,
     ) -> TransportResponse:
         """Send one request without redirects and return a bounded response."""
+        if cancel_event is not None and not callable(getattr(cancel_event, "is_set", None)):
+            raise ValueError("The cancellation event is invalid.")
+        if (
+            not isinstance(max_response_bytes, int)
+            or isinstance(max_response_bytes, bool)
+            or max_response_bytes < 0
+        ):
+            raise ValueError("The response limit is invalid.")
+
         connection: http.client.HTTPConnection | None = None
         response: http.client.HTTPResponse | None = None
         try:
@@ -58,15 +69,20 @@ class StandardHttpTransport:
                 port = 80 if parsed.scheme.lower() == "http" else 443
             if not 1 <= port <= 65535:
                 raise ValueError
-            if max_response_bytes < 0:
-                raise ValueError
 
             if parsed.scheme.lower() == "https":
+                context = ssl.create_default_context()
+                try:
+                    # Frozen builds ship certifi; add its bundle on top of the
+                    # system store so minimal hosts still verify public CAs.
+                    context.load_verify_locations(cafile=certifi.where())
+                except Exception:
+                    pass
                 connection = http.client.HTTPSConnection(
                     parsed.hostname,
                     port,
                     timeout=connect_timeout,
-                    context=ssl.create_default_context(),
+                    context=context,
                 )
             else:
                 connection = http.client.HTTPConnection(
@@ -81,9 +97,12 @@ class StandardHttpTransport:
                 path += "?" + parsed.query
             if cancel_event is not None and bool(getattr(cancel_event, "is_set")()):
                 raise HttpTransportError("The HTTP request was cancelled")
-            connection.request(method, path, body=body, headers=headers or {})
+            # Connect with the short timeout, then budget the upload and the
+            # read with the transfer timeout instead of the connect timeout.
+            connection.connect()
             if connection.sock is not None:
                 connection.sock.settimeout(read_timeout)
+            connection.request(method, path, body=body, headers=headers or {})
             response = connection.getresponse()
             response_body = response.read(max_response_bytes + 1)
             if len(response_body) > max_response_bytes:

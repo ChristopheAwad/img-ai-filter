@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -101,6 +102,31 @@ def _regular_identity(path: Path) -> FileIdentity:
     return _identity(file_stat)
 
 
+def _verify_download_bytes(path: Path, download: VerifiedDownload) -> None:
+    """Re-hash the verified file so a post-verification swap cannot slip through."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as update_file:
+            for chunk in iter(lambda: update_file.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+    except OSError:
+        raise InstallError("The update file could not be verified") from None
+    if size != download.size or digest.hexdigest() != download.sha256:
+        raise InstallError("The update failed verification")
+
+
+def _require_free_space(directory: Path, needed: int) -> None:
+    """Fail before installing when the AppImage filesystem is too full."""
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError:
+        raise InstallError("The available storage could not be checked") from None
+    if type(needed) is not int or free < needed:
+        raise InstallError("There is not enough free space for the update")
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
@@ -127,6 +153,7 @@ def install_appimage(
     new_path = download.path
     if appimage.parent != new_path.parent:
         raise InstallError("The verified update must be in the AppImage directory")
+    _require_free_space(appimage.parent, download.size)
 
     current_identity = _regular_identity(appimage)
     if current_identity != installation.identity:
@@ -159,7 +186,9 @@ def install_appimage(
             raise InstallError("The current AppImage changed before installation")
         if _regular_identity(new_path) != new_identity:
             raise InstallError("The verified update changed before installation")
+        _verify_download_bytes(new_path, download)
         replace(appimage, backup)
+        _fsync_directory(appimage.parent)
     except InstallError:
         raise
     except OSError:

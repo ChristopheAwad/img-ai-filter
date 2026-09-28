@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from packaging.version import InvalidVersion, Version
 
@@ -16,7 +16,7 @@ MAX_METADATA_BYTES = 1_000_000
 MAX_APPIMAGE_BYTES = 2_000_000_000
 _MAX_NOTES_CHARS = 20_000
 _NOTES_SUFFIX = "\n[Release notes truncated]"
-_SHA256 = re.compile(r"sha256:([0-9a-f]{64})\Z")
+_SHA256 = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 
 
 class UpdateMetadataError(ValueError):
@@ -81,10 +81,12 @@ def _asset(document: object, expected_name: str) -> UpdateAsset:
         or parsed.fragment
     ):
         raise UpdateMetadataError("AppImage URL is invalid")
+    if unquote(parsed.path).split("/")[-1] != expected_name:
+        raise UpdateMetadataError("AppImage URL is invalid")
     match = _SHA256.fullmatch(digest) if isinstance(digest, str) else None
     if match is None:
         raise UpdateMetadataError("AppImage digest is invalid")
-    return UpdateAsset(name=name, size=size, url=url, sha256=match.group(1))
+    return UpdateAsset(name=name, size=size, url=url, sha256=match.group(1).lower())
 
 
 def _release(document: object) -> UpdateRelease | None:
