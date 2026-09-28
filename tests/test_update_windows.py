@@ -337,17 +337,20 @@ def test_restart_script_rejects_quote_in_path(tmp_path: Path) -> None:
         )
 
 
-def test_installer_launch_rejects_symlink(tmp_path: Path) -> None:
-    if os.name != "posix":
-        pytest.skip("symlink check needs posix in this suite")
-    real = tmp_path / "real.exe"
-    real.write_bytes(b"setup")
-    link = tmp_path / "setup.exe"
-    link.symlink_to(real)
+def test_installer_launch_rejects_symlink(tmp_path: Path, monkeypatch) -> None:
+    setup = tmp_path / "setup.exe"
+    setup.write_bytes(b"setup")
+    real_lstat = Path.lstat
+
+    def fake_lstat(self: Path):
+        original = real_lstat(self)
+        return os.stat_result(
+            (stat.S_IFLNK | 0o777,) + tuple(original)[1:]
+        )
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
     calls: list = []
-    assert (
-        launch_windows_installer(link, launcher=calls.append) is False
-    )
+    assert launch_windows_installer(setup, launcher=calls.append) is False
     assert calls == []
 
 

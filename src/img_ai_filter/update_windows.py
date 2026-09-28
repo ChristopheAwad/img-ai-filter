@@ -339,7 +339,7 @@ def stage_portable_zip(verified: VerifiedDownload, app_dir: Path) -> Path:
             if len(roots) != 1:
                 raise InstallError("The update file is not a safe regular file")
             root = next(iter(roots))
-            if root == app_dir.name:
+            if root.casefold() == app_dir.name.casefold():
                 raise InstallError("The update file is not a safe regular file")
             archive.extractall(staging.parent)
             extracted_root = staging.parent / root
