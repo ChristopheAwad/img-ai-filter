@@ -67,9 +67,10 @@ Selecting a different folder clears results from the prior folder and enables a 
 
 - Reconsider a packaged offline classifier only after the server-only MVP is useful and representative licensed evaluation data exists.
 - Reconsider authenticated-server GUI support if a real server requires it; the secure keyring adapter already exists.
-- Add automatic restoration from quarantine and undo for completed move batches.
+- Add automatic restoration from quarantine; an explicit undo of the last quarantine batch is planned as F-025.
 - Add deletion, duplicate detection, image-quality detection, GIF, and HEIC support.
 - Consider app-managed vision-server installation only after the user-managed LAN workflow is proven.
 - Consider public cloud vision endpoints separately; they are not part of the MVP.
 - Finalize public installers, signing, and distribution for each operating system after the Linux test-distribution feedback.
 - Complete a bounded first-launch, settings-recovery, large-scan, accessibility, layout, and connection-error reliability pass before claiming public release readiness.
+- macOS packaging, signing, and distribution are on hold indefinitely (user decision 2026-09-27).
