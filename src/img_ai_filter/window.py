@@ -294,6 +294,62 @@ class ActivityHistoryDialog(QDialog):
             )
 
 
+class LargePreviewDialog(QDialog):
+    """Resizable in-memory large preview for one candidate."""
+
+    def __init__(self, candidate: ScanCandidate, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Large view - {Path(candidate.path).name}")
+        self.setMinimumSize(420, 520)
+
+        self.image_label = QLabel()
+        self.image_label.setObjectName("largePreviewImage")
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap = QPixmap.fromImage(QImage.fromData(candidate.large_preview_png))
+        if pixmap.isNull():
+            self.image_label.setText("Large preview is not available.")
+            self.image_label.setWordWrap(True)
+        else:
+            if max(pixmap.width(), pixmap.height()) > 512:
+                pixmap = pixmap.scaled(
+                    512,
+                    512,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            self.image_label.setPixmap(pixmap)
+
+        self.path_label = QLabel(str(candidate.path))
+        self.path_label.setObjectName("largePreviewPath")
+        self.path_label.setWordWrap(True)
+        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        confidence = round(candidate.confidence * 100)
+        category = candidate.category.replace("_", " ")
+        self.meta_label = QLabel(f"{category} | {confidence}%")
+        self.meta_label.setObjectName("largePreviewMeta")
+
+        self.reason_label = QLabel(candidate.reason)
+        self.reason_label.setObjectName("largePreviewReason")
+        self.reason_label.setWordWrap(True)
+        self.reason_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.addWidget(self.image_label, 0, Qt.AlignmentFlag.AlignCenter)
+        body_layout.addWidget(self.path_label)
+        body_layout.addWidget(self.meta_label)
+        body_layout.addWidget(self.reason_label)
+        body_layout.addStretch(1)
+        scroll.setWidget(body)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(scroll, 1)
+
+
 class CandidateSelectionSettingsDialog(QDialog):
     """Configure automatic selection for candidates from future scans."""
 
@@ -753,6 +809,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self._cancel_operation)
         self.results_list.itemChanged.connect(self._candidate_item_changed)
         self.results_list.itemSelectionChanged.connect(self._update_candidate_selection_colors)
+        self.results_list.itemDoubleClicked.connect(self._open_large_view_by_item)
+        self.results_list.itemActivated.connect(self._open_large_view_by_item)
         self._update_controls()
 
     @staticmethod
@@ -883,6 +941,23 @@ class MainWindow(QMainWindow):
             if item.checkState() == Qt.CheckState.Checked:
                 return True
         return False
+
+    def _open_large_view_by_item(self, item: Any) -> None:
+        if item is None:
+            return
+        try:
+            candidate = item.data(Qt.ItemDataRole.UserRole)
+        except Exception:
+            return
+        if not isinstance(candidate, ScanCandidate):
+            return
+        dialog = LargePreviewDialog(candidate, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.setModal(False)
+        dialog.show()
+
+    def _open_large_view(self, item: Any) -> None:
+        self._open_large_view_by_item(item)
 
     def _test_connection(self) -> None:
         if self._thread is not None or self._update_thread is not None:

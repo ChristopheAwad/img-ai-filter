@@ -32,6 +32,9 @@ class Prepared:
     thumbnail_png: bytes = b"preview-png"
     thumbnail_width: int = 8
     thumbnail_height: int = 8
+    large_preview_png: bytes = b"large-png"
+    large_preview_width: int = 16
+    large_preview_height: int = 16
 
 
 def _candidate(path: Path, category: str, confidence: float = 0.8) -> ScanCandidate:
@@ -44,6 +47,9 @@ def _candidate(path: Path, category: str, confidence: float = 0.8) -> ScanCandid
         b"candidate-preview",
         8,
         8,
+        b"candidate-large",
+        16,
+        16,
     )
 
 
@@ -558,3 +564,43 @@ def test_thumbnail_bytes_and_identity_never_enter_exceptions() -> None:
             ),
             classify=lambda *args, **kwargs: pytest.fail("must not classify"),
         )
+
+
+def test_candidate_carries_large_preview_from_preparation() -> None:
+    path = Path("one.png")
+    prepared = Prepared("data:image/png;base64,one")
+
+    summary = run_server_scan(
+        Path("/selected"),
+        CONFIG,
+        object(),
+        scan=lambda _: ScanResult((path,), ()),
+        prepare=lambda _: prepared,
+        classify=lambda *_a, **_k: _decision("screenshot"),
+    )
+
+    candidate = summary.candidates[0]
+    assert candidate.large_preview_png == b"large-png"
+    assert (candidate.large_preview_width, candidate.large_preview_height) == (16, 16)
+
+
+def test_large_prepare_failure_counts_as_preparation() -> None:
+    paths = (Path("bad.png"), Path("good.png"))
+
+    def prepare(path: Path):
+        if path.name == "bad.png":
+            raise ImagePayloadError("The large preview could not be encoded")
+        return Prepared("data:image/png;base64,good")
+
+    summary = run_server_scan(
+        Path("/selected"),
+        CONFIG,
+        object(),
+        scan=lambda _: ScanResult(paths, ()),
+        prepare=prepare,
+        classify=lambda *args, **kwargs: _decision("screenshot"),
+    )
+
+    assert summary.failed == 1
+    assert summary.analyzed == 1
+    assert summary.candidate_count == 1

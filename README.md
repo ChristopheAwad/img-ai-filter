@@ -49,7 +49,8 @@ only an unprotected KoboldCpp server.
 
 Each candidate shows a compact preview (maximum 96 by 96 pixels) next to its
 path, category, reason, and confidence. Previews are generated in memory during
-the scan and are never written to disk.
+the scan and are never written to disk. Double-click a candidate to open a
+larger in-memory preview. The large view never reads the source file again.
 
 Select **Select Quarantine Folder** to choose where checked files move. The app
 remembers the folder between launches and rejects a folder that overlaps the

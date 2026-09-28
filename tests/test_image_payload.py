@@ -493,3 +493,68 @@ def test_thumbnail_does_not_touch_any_source_or_temp_file(tmp_path: Path) -> Non
     prepare_image(source)
 
     assert sorted(path.name for path in tmp_path.iterdir()) == before_names
+
+
+def test_large_preview_is_bounded_512_png(tmp_path: Path) -> None:
+    source = _save(tmp_path / "source.png", Image.new("RGB", (800, 600)), "PNG")
+
+    prepared = prepare_image(source)
+
+    assert (prepared.large_preview_width, prepared.large_preview_height) == (512, 384)
+    assert _decoded_bytes(prepared.large_preview_png).size == (512, 384)
+    assert _decoded_bytes(prepared.large_preview_png).format == "PNG"
+    assert len(prepared.large_preview_png) <= image_payload.MAX_LARGE_PREVIEW_BYTES
+
+
+def test_large_preview_does_not_upscale_small_image(tmp_path: Path) -> None:
+    source = _save(tmp_path / "source.png", Image.new("RGB", (32, 20)), "PNG")
+
+    prepared = prepare_image(source)
+
+    assert (prepared.large_preview_width, prepared.large_preview_height) == (32, 20)
+
+
+def test_large_preview_applies_exif_orientation(tmp_path: Path) -> None:
+    source = tmp_path / "rotated.jpg"
+    exif = Image.Exif()
+    exif[274] = 6
+    Image.new("RGB", (80, 20), (10, 20, 30)).save(source, "JPEG", exif=exif)
+
+    prepared = prepare_image(source)
+
+    assert (prepared.large_preview_width, prepared.large_preview_height) == (20, 80)
+
+
+def test_large_preview_preserves_transparency(tmp_path: Path) -> None:
+    source = _save(
+        tmp_path / "alpha.png", Image.new("RGBA", (200, 100), (1, 2, 3, 0)), "PNG"
+    )
+
+    assert _decoded_bytes(prepare_image(source).large_preview_png).mode == "RGBA"
+
+    rgb = _save(tmp_path / "rgb.png", Image.new("RGB", (200, 100)), "PNG")
+    assert _decoded_bytes(prepare_image(rgb).large_preview_png).mode == "RGB"
+
+
+def test_large_preview_byte_limit_is_inclusive(tmp_path: Path, monkeypatch) -> None:
+    source = _save(tmp_path / "source.png", Image.effect_noise((100, 100), 40), "PNG")
+    baseline = prepare_image(source).large_preview_png
+    monkeypatch.setattr(image_payload, "MAX_LARGE_PREVIEW_BYTES", len(baseline))
+
+    assert prepare_image(source).large_preview_png == baseline
+
+
+def test_large_preview_over_byte_limit_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    source = _save(tmp_path / "source.png", Image.effect_noise((64, 64), 40), "PNG")
+    monkeypatch.setattr(image_payload, "MAX_LARGE_PREVIEW_BYTES", 10)
+
+    with pytest.raises(ImagePayloadError, match="large preview"):
+        prepare_image(source)
+
+
+def test_large_preview_has_no_path_leak(tmp_path: Path) -> None:
+    source = _save(tmp_path / "source.png", Image.new("RGB", (64, 64)), "PNG")
+
+    prepared = prepare_image(source)
+
+    assert str(source).encode() not in prepared.large_preview_png

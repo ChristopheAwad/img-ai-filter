@@ -30,6 +30,9 @@ class ScanCandidate:
     thumbnail_png: bytes
     thumbnail_width: int
     thumbnail_height: int
+    large_preview_png: bytes = b""
+    large_preview_width: int = 0
+    large_preview_height: int = 0
     checked: bool = field(default=False, init=False)
 
 
@@ -168,6 +171,9 @@ def run_server_scan(
                         prepared.thumbnail_png,
                         prepared.thumbnail_width,
                         prepared.thumbnail_height,
+                        prepared.large_preview_png,
+                        prepared.large_preview_width,
+                        prepared.large_preview_height,
                     )
                 )
             elif decision.category in _CANDIDATE_CATEGORIES:
