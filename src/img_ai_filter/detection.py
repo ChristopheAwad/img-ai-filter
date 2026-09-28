@@ -114,10 +114,12 @@ class DetectionResult:
         if _FS_INSIDE_REASON.search(self.reason):
             raise DetectionError("Reason must not expose filesystem details")
 
-        if not self.is_candidate and self.category != ORDINARY:
-            raise DetectionError("A non-candidate result must use the ordinary category")
+        if not self.is_candidate and self.category not in (ORDINARY, UNCERTAIN):
+            raise DetectionError("A non-candidate result must use the ordinary or uncertain category")
         if self.is_candidate and self.category == ORDINARY:
             raise DetectionError("A candidate result must not use the ordinary category")
+        if self.is_candidate and self.category == UNCERTAIN:
+            raise DetectionError("Uncertain results must not be candidates")
 
         if self.category == UNCERTAIN and self.default_checked:
             raise DetectionError("Uncertain results must not start checked")

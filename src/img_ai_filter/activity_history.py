@@ -10,6 +10,7 @@ from typing import Any, TypeAlias
 
 
 SCAN_HISTORY_KEY = "scan_history"
+SCAN_HISTORY_BACKUP_KEY = "scan_history_backup"
 SCAN_HISTORY_SCHEMA_VERSION = 2
 SCAN_HISTORY_LIMIT = 100
 
@@ -239,13 +240,32 @@ def _decode_history(raw: object) -> tuple[HistoryRecord, ...]:
     return tuple(valid[-SCAN_HISTORY_LIMIT:])
 
 
+def _pick_newer(
+    main_raw: object, backup_raw: object
+) -> tuple[HistoryRecord, ...]:
+    """Return the newest decodable payload, preferring the main value on ties."""
+    main_records = _decode_history(main_raw)
+    backup_records = _decode_history(backup_raw)
+    if not main_records:
+        return backup_records
+    if not backup_records:
+        return main_records
+    if backup_records[-1].started_at_utc > main_records[-1].started_at_utc:
+        return backup_records
+    return main_records
+
+
 def load_activity_history(store: Any) -> tuple[HistoryRecord, ...]:
     """Load valid records without exposing malformed data or store failures."""
     try:
         raw = store.read(SCAN_HISTORY_KEY)
     except Exception:
         return ()
-    return _decode_history(raw)
+    try:
+        backup = store.read(SCAN_HISTORY_BACKUP_KEY)
+    except Exception:
+        backup = None
+    return _pick_newer(raw, backup)
 
 
 def append_activity_history(store: Any, record: HistoryRecord) -> bool:
@@ -255,14 +275,28 @@ def append_activity_history(store: Any, record: HistoryRecord) -> bool:
         raw = store.read(SCAN_HISTORY_KEY)
     except Exception:
         return False
+    try:
+        backup = store.read(SCAN_HISTORY_BACKUP_KEY)
+    except Exception:
+        backup = None
 
-    records = (*_decode_history(raw), validated)[-SCAN_HISTORY_LIMIT:]
+    base = _pick_newer(raw, backup)
+    records = (*base, validated)[-SCAN_HISTORY_LIMIT:]
     payload = {
         "schema_version": SCAN_HISTORY_SCHEMA_VERSION,
         "records": [_record_to_dict(item) for item in records],
     }
     try:
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return False
+    # Backup first so a crash during the main write still leaves the newest
+    # payload recoverable; a backup failure alone must not lose the append.
+    try:
+        store.write(SCAN_HISTORY_BACKUP_KEY, serialized)
+    except Exception:
+        pass
+    try:
         store.write(SCAN_HISTORY_KEY, serialized)
     except Exception:
         return False
@@ -270,9 +304,10 @@ def append_activity_history(store: Any, record: HistoryRecord) -> bool:
 
 
 def clear_activity_history(store: Any) -> bool:
-    """Delete only activity history, treating an absent value as success."""
+    """Delete activity history and its recovery backup, treating absence as success."""
     try:
         store.delete(SCAN_HISTORY_KEY)
+        store.delete(SCAN_HISTORY_BACKUP_KEY)
     except Exception:
         return False
     return True

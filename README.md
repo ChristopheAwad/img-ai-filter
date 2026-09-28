@@ -148,8 +148,11 @@ target; this is not yet a signed public release for every Linux distribution.
 Verify both downloaded artifacts from their folder:
 
 ```bash
-sha256sum --check SHA256SUMS
+sha256sum --check SHA256SUMS --ignore-missing
 ```
+
+`SHA256SUMS` also lists the Windows assets; `--ignore-missing` skips entries
+you did not download.
 
 To use the AppImage:
 

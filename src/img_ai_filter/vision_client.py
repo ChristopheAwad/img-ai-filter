@@ -20,6 +20,10 @@ VISION_READ_TIMEOUT = 180.0
 _TRANSPORT_ERROR = "The image could not be analyzed by KoboldCpp"
 _INVALID_RESPONSE = "The KoboldCpp server returned an invalid response"
 _DATA_URL_PREFIX = "data:image/png;base64,"
+# Request PNGs are bounded to 8 MiB by image preparation (~10.7 MiB base64).
+# Reject anything far larger before base64 decoding so a direct caller cannot
+# turn validation into a memory blowup.
+_MAX_DATA_URL_ENCODED_BYTES = 12 * 1024 * 1024
 
 _SYSTEM_PROMPT = (
     "Classify the image by visual structure only. Do not transcribe or quote any "
@@ -55,6 +59,8 @@ def _validate_data_url(data_url: str) -> None:
         raise VisionClientError("A PNG image is required")
     encoded = data_url[len(_DATA_URL_PREFIX) :]
     if not encoded:
+        raise VisionClientError("A PNG image is required")
+    if len(encoded) > _MAX_DATA_URL_ENCODED_BYTES:
         raise VisionClientError("A PNG image is required")
     try:
         base64.b64decode(encoded, validate=True)
@@ -141,6 +147,8 @@ def classify_image(
     if not isinstance(model, str) or not model.strip():
         raise VisionClientError("A discovered model is required")
     _validate_data_url(data_url)
+    if cancel_event is not None and not callable(getattr(cancel_event, "is_set", None)):
+        raise ValueError("The cancellation event is invalid.")
     if cancel_event is not None and getattr(cancel_event, "is_set")():
         raise VisionCancelled("The image analysis was cancelled")
 
@@ -156,6 +164,8 @@ def classify_image(
             cancel_event=cancel_event,
         )
     except VisionCancelled:
+        raise
+    except (TypeError, AttributeError):
         raise
     except Exception as error:
         if cancel_event is not None and getattr(cancel_event, "is_set")():

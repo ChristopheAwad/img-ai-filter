@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 import platform
@@ -24,8 +25,12 @@ def _metadata(manifest, split: str) -> dict[str, object]:
     for entry in manifest:
         counts[entry.label] = counts.get(entry.label, 0) + 1
         split_counts[entry.split] = split_counts.get(entry.split, 0) + 1
+    try:
+        dataset_root = str(manifest.root.relative_to(Path.cwd()))
+    except (TypeError, ValueError):
+        dataset_root = str(manifest.root)
     return {
-        "dataset_root": str(manifest.root),
+        "dataset_root": dataset_root,
         "label_counts": counts,
         "split_counts": split_counts,
         "reported_split": split,
@@ -44,37 +49,52 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--markdown", type=Path, help="output Markdown report path")
     args = parser.parse_args(argv)
 
-    manifest = load_manifest(args.dataset, args.manifest)
+    try:
+        manifest = load_manifest(args.dataset, args.manifest)
+    except (OSError, ValueError, csv.Error) as error:
+        print(f"cannot read manifest: {error}", file=sys.stderr)
+        return 2
 
     targets = AcceptanceTargets()
     detectors = {
         GeometryDetector.name: GeometryDetector(),
     }
 
-    evaluations = {
-        name: evaluate_detector(detector, manifest, args.split, targets=targets)
-        for name, detector in detectors.items()
-    }
+    try:
+        evaluations = {
+            name: evaluate_detector(detector, manifest, args.split, targets=targets)
+            for name, detector in detectors.items()
+        }
+    except ValueError as error:
+        print(f"cannot evaluate split: {error}", file=sys.stderr)
+        return 2
 
     metadata = _metadata(manifest, args.split)
+    rendered = render_json(evaluations, targets, args.split, metadata)
 
     if args.json:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(
-            render_json(evaluations, targets, args.split, metadata),
-            encoding="utf-8",
-        )
+        try:
+            args.json.parent.mkdir(parents=True, exist_ok=True)
+            args.json.write_text(rendered, encoding="utf-8")
+        except OSError as error:
+            print(f"cannot write JSON report: {error}", file=sys.stderr)
+            return 1
     if args.markdown:
-        args.markdown.parent.mkdir(parents=True, exist_ok=True)
-        args.markdown.write_text(
-            render_markdown(evaluations, targets, args.split, metadata),
-            encoding="utf-8",
-        )
+        try:
+            args.markdown.parent.mkdir(parents=True, exist_ok=True)
+            args.markdown.write_text(
+                render_markdown(evaluations, targets, args.split, metadata),
+                encoding="utf-8",
+            )
+        except OSError as error:
+            print(f"cannot write Markdown report: {error}", file=sys.stderr)
+            return 1
 
-    choose = json.loads(render_json(evaluations, targets, args.split, metadata))[
-        "selected_detector"
-    ]
+    choose = json.loads(rendered)["selected_detector"]
     print(f"split={args.split} selected_detector={choose}")
+    if any(evaluation.errors for evaluation in evaluations.values()):
+        print("evaluation errors present", file=sys.stderr)
+        return 1
     return 0
 
 

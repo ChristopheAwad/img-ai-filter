@@ -8,6 +8,7 @@ import json
 import pytest
 
 from img_ai_filter.activity_history import (
+    SCAN_HISTORY_BACKUP_KEY,
     SCAN_HISTORY_KEY,
     SCAN_HISTORY_LIMIT,
     SCAN_HISTORY_SCHEMA_VERSION,
@@ -257,13 +258,13 @@ def test_unicode_record_round_trips() -> None:
     assert "照片" in store.values[SCAN_HISTORY_KEY]
 
 
-def test_append_preserves_records_and_writes_once() -> None:
+def test_append_preserves_records_and_writes_backup_then_main() -> None:
     first = _record(1)
     second = _record(2)
     store = MemoryStore(_payload(_record_dict(first)))
 
     assert append_activity_history(store, second)
-    assert store.writes == 1
+    assert store.writes == 2
     assert load_activity_history(store) == (first, second)
 
 
@@ -352,8 +353,9 @@ def test_clear_deletes_only_history_and_preserves_other_settings() -> None:
     )
 
     assert clear_activity_history(store)
-    assert store.deletes == [SCAN_HISTORY_KEY]
+    assert store.deletes == [SCAN_HISTORY_KEY, SCAN_HISTORY_BACKUP_KEY]
     assert SCAN_HISTORY_KEY not in store.values
+    assert SCAN_HISTORY_BACKUP_KEY not in store.values
     assert store.values == {
         "endpoint_url": "http://127.0.0.1/",
         "endpoint_model": "model",

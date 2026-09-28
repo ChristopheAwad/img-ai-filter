@@ -70,6 +70,7 @@ class ScanSummary:
     skipped_directories: int
     failure_breakdown: ScanFailureBreakdown = field(default_factory=ScanFailureBreakdown)
     filtered: int = 0
+    skipped_files: int = 0
 
     @property
     def candidate_count(self) -> int:
@@ -96,6 +97,17 @@ def validate_selected_categories(categories: object) -> frozenset[str]:
     return frozenset(categories)
 
 
+def initial_check_state(confidence: float, threshold_percent: int) -> bool:
+    """Decide one new candidate row's initial check state from raw confidence.
+
+    Single source of truth for the F-009 rule: checked when raw confidence is
+    at or above the saved integer threshold. The workflow leaves
+    `ScanCandidate.checked` False; the GUI applies this helper per new row so a
+    changed threshold never rewrites existing review choices.
+    """
+    return confidence >= threshold_percent / 100
+
+
 def run_server_scan(
     folder: Path,
     config: Any,
@@ -109,6 +121,8 @@ def run_server_scan(
     selected_categories: frozenset[str] = _CANDIDATE_CATEGORIES,
 ) -> ScanSummary:
     """Discover and classify images one at a time without exposing failures."""
+    if cancel_event is not None and not callable(getattr(cancel_event, "is_set", None)):
+        raise ValueError("The cancellation event is invalid.")
     selected_categories = validate_selected_categories(selected_categories)
 
     def cancelled() -> bool:
@@ -126,10 +140,12 @@ def run_server_scan(
             skipped_count,
             ScanFailureBreakdown(**failure_counts),
             filtered,
+            skipped_files_count,
         )
 
     candidates: list[ScanCandidate] = []
     discovered = analyzed = ordinary = uncertain = failed = skipped_count = filtered = 0
+    skipped_files_count = 0
     failure_counts = {key: 0 for key in ScanFailureBreakdown.__dataclass_fields__}
     if cancelled():
         return summary(ScanState.CANCELLED)
@@ -141,6 +157,7 @@ def run_server_scan(
 
     discovered = len(scan_result.images)
     skipped_count = len(scan_result.skipped_directories)
+    skipped_files_count = len(scan_result.skipped_files)
     for path in scan_result.images:
         if cancelled():
             return summary(ScanState.CANCELLED)
@@ -181,13 +198,19 @@ def run_server_scan(
             elif decision.category == "uncertain":
                 uncertain += 1
             else:
+                # The strict response parser can only emit known categories, so
+                # this branch handles only contract drift (e.g. a removed label
+                # like social_post). Count it as ordinary, never as failed.
                 ordinary += 1
         if progress is not None:
-            progress(analyzed + failed, discovered)
+            try:
+                progress(analyzed + failed, discovered)
+            except Exception:
+                pass
 
     if discovered > 0 and analyzed == 0 and failed == discovered:
         state = ScanState.FAILED
-    elif failed or skipped_count:
+    elif failed or skipped_count or skipped_files_count:
         state = ScanState.COMPLETED_WITH_SKIPS
     else:
         state = ScanState.COMPLETED

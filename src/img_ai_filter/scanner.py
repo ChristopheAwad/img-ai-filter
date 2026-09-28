@@ -19,6 +19,7 @@ class ScanError(ValueError):
 class ScanResult:
     images: tuple[Path, ...]
     skipped_directories: tuple[Path, ...]
+    skipped_files: tuple[Path, ...] = ()
 
 
 def is_windows_reparse_point(path: Path) -> bool:
@@ -33,10 +34,19 @@ def is_windows_reparse_point(path: Path) -> bool:
 
 def scan_images(folder: PathInput) -> ScanResult:
     """Find supported images below folder without following symbolic links."""
-    if isinstance(folder, str) and not folder.strip():
+    try:
+        raw_path = os.fspath(folder)
+    except TypeError:
+        raise ScanError("Select a folder before scanning.") from None
+    if isinstance(raw_path, bytes):
+        try:
+            raw_path = os.fsdecode(raw_path)
+        except (UnicodeDecodeError, ValueError):
+            raise ScanError("Select a folder before scanning.") from None
+    if not isinstance(raw_path, str) or not raw_path.strip():
         raise ScanError("Select a folder before scanning.")
 
-    root = Path(folder)
+    root = Path(raw_path)
     if not root.exists():
         raise ScanError(f"Selected path does not exist: {root}")
     if root.is_symlink() or is_windows_reparse_point(root) or not root.is_dir():
@@ -44,6 +54,7 @@ def scan_images(folder: PathInput) -> ScanResult:
 
     images: list[Path] = []
     skipped_directories: list[Path] = []
+    skipped_files: list[Path] = []
     pending = [root]
 
     while pending:
@@ -62,6 +73,10 @@ def scan_images(folder: PathInput) -> ScanResult:
                         elif entry.is_file(follow_symlinks=False) and path.suffix.casefold() in SUPPORTED_EXTENSIONS:
                             images.append(path)
                     except OSError:
+                        try:
+                            skipped_files.append(Path(entry.path))
+                        except (TypeError, ValueError):
+                            pass
                         continue
         except OSError as error:
             if directory == root:
@@ -72,4 +87,5 @@ def scan_images(folder: PathInput) -> ScanResult:
     return ScanResult(
         images=tuple(sorted(images, key=sort_key)),
         skipped_directories=tuple(sorted(skipped_directories, key=sort_key)),
+        skipped_files=tuple(sorted(skipped_files, key=sort_key)),
     )

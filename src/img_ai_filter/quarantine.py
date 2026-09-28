@@ -229,7 +229,79 @@ def _safety_walk(quarantine_root: Path, destination: Path) -> None:
             raise QuarantineError("The quarantine destination could not be inspected.") from None
 
 
+def _verify_destination_contained(quarantine_root: Path, destination: Path) -> None:
+    """Reject destinations that escape the quarantine root after directory creation.
+
+    `_safety_walk` runs before `makedirs` and skips missing parents. This
+    strict re-check runs after `makedirs` when every parent must exist, so a
+    parent swapped for a symlink between the two calls cannot redirect the copy.
+    """
+    try:
+        relative_parent = destination.parent.relative_to(quarantine_root)
+    except ValueError:
+        raise QuarantineError("The quarantine destination is outside the quarantine folder.") from None
+    current = quarantine_root
+    for part in relative_parent.parts:
+        current = current / part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            raise QuarantineError("The quarantine destination could not be created safely.") from None
+        except OSError:
+            raise QuarantineError("The quarantine destination could not be inspected.") from None
+        if stat.S_ISLNK(mode) or is_windows_reparse_point(current):
+            raise QuarantineError("A quarantine destination path is a symbolic link.")
+    try:
+        resolved_root = quarantine_root.resolve()
+        real_parent = Path(os.path.realpath(destination.parent))
+    except OSError:
+        raise QuarantineError("The quarantine destination could not be inspected.") from None
+    if real_parent != resolved_root and resolved_root not in real_parent.parents:
+        raise QuarantineError("The quarantine destination is outside the quarantine folder.")
+
+
+def _live_roots_ok(plan: QuarantinePlan) -> bool:
+    """Re-check that neither root was replaced mid-execution (no symlinks)."""
+    try:
+        if os.path.islink(plan.quarantine_root) or is_windows_reparse_point(plan.quarantine_root):
+            return False
+        if os.path.islink(plan.source_root) or is_windows_reparse_point(plan.source_root):
+            return False
+        if not plan.quarantine_root.is_dir() or not plan.source_root.is_dir():
+            return False
+        if _same_or_overlap(plan.source_root, plan.quarantine_root):
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def _rollback_orphaned_copies(plan: QuarantinePlan, results: list, copied: list[bool]) -> None:
+    """Remove verified copies that never received an outcome (stopped early)."""
+    for index, item in enumerate(plan.items):
+        if copied[index] and results[index] is None:
+            try:
+                _remove_partial_destination(item.destination)
+            except OSError:
+                pass
+
+
 CONFLICT_MESSAGE = "A file with the same name already exists in the quarantine folder."
+DESTINATION_EXISTS_MESSAGE = "The destination already exists."
+ROOT_CHANGED_MESSAGE = "The source or quarantine folder changed during the move."
+
+def _report_progress(progress: Callable[[int, int], None] | None, done: int, total: int) -> None:
+    """Deliver executor progress without letting a bad callback abort the move."""
+    if progress is None:
+        return
+    try:
+        progress(done, total)
+    except Exception:
+        pass
+
+
+def _is_destination_exists_error(error: QuarantineError) -> bool:
+    return str(error) in (DESTINATION_EXISTS_MESSAGE, CONFLICT_MESSAGE)
 SAFE_ERROR_MESSAGE = "The file could not be moved safely."
 RECORD_ERROR_MESSAGE = "The move record could not be updated."
 REMOVE_ERROR_MESSAGE = "The source file could not be moved away after a verified copy."
@@ -267,33 +339,42 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
     results: list[MoveOutcome | None] = [None] * total
     copied = [False] * total
     stopped = False
+    root_untrusted = False
+
+    def _fail_remaining_locked(start: int) -> None:
+        for rest in range(start, total):
+            if results[rest] is None:
+                results[rest] = MoveOutcome(
+                    plan.items[rest].source,
+                    plan.items[rest].destination,
+                    MoveStatus.FAILED,
+                    ROOT_CHANGED_MESSAGE,
+                )
 
     for index, item in enumerate(plan.items):
         if stopped:
+            break
+        if not _live_roots_ok(plan):
+            # Roots are untrusted: no log writes (path unsafe), no cleanup
+            # through lexical paths, fail closed for this and all later items.
+            root_untrusted = True
+            stopped = True
+            _fail_remaining_locked(index)
+            _report_progress(progress, index + 1, total)
             break
         try:
             _revalidate_source(item.source, item.identity)
             source_stat = item.source.stat()
             _safety_walk(plan.quarantine_root, item.destination)
         except QuarantineError as error:
-            try:
-                _remove_partial_destination(item.destination)
-            except OSError:
-                pass
             _record_failure(log_path, plan, item, str(error))
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, str(error))
-            if progress is not None:
-                progress(index + 1, total)
+            _report_progress(progress, index + 1, total)
             continue
         except Exception:
-            try:
-                _remove_partial_destination(item.destination)
-            except OSError:
-                pass
             _record_failure(log_path, plan, item, SAFE_ERROR_MESSAGE)
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, SAFE_ERROR_MESSAGE)
-            if progress is not None:
-                progress(index + 1, total)
+            _report_progress(progress, index + 1, total)
             continue
         if item.destination.is_symlink() or item.destination.exists():
             try:
@@ -303,21 +384,46 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 stopped = True
             else:
                 results[index] = MoveOutcome(item.source, item.destination, MoveStatus.CONFLICT, CONFLICT_MESSAGE)
-            if progress is not None:
-                progress(index + 1, total)
+            _report_progress(progress, index + 1, total)
+            continue
+        try:
+            os.makedirs(item.destination.parent, exist_ok=True)
+        except OSError:
+            _record_failure(log_path, plan, item, "The file could not be copied safely.")
+            results[index] = MoveOutcome(
+                item.source, item.destination, MoveStatus.FAILED,
+                "The file could not be copied safely.",
+            )
+            _report_progress(progress, index + 1, total)
+            continue
+        try:
+            _verify_destination_contained(plan.quarantine_root, item.destination)
+        except QuarantineError as error:
+            _record_failure(log_path, plan, item, str(error))
+            results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, str(error))
+            _report_progress(progress, index + 1, total)
             continue
         try:
             _copy_verified(item.source, item.destination, item.identity)
             _apply_metadata(item.destination, source_stat)
         except QuarantineError as error:
+            if _is_destination_exists_error(error):
+                try:
+                    _write_move_log_records(log_path, [_move_log_record(plan, item, "conflict", CONFLICT_MESSAGE)])
+                except OSError:
+                    _record_failure(log_path, plan, item, RECORD_ERROR_MESSAGE)
+                    results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, RECORD_ERROR_MESSAGE)
+                else:
+                    results[index] = MoveOutcome(item.source, item.destination, MoveStatus.CONFLICT, CONFLICT_MESSAGE)
+                _report_progress(progress, index + 1, total)
+                continue
             try:
                 _remove_partial_destination(item.destination)
             except OSError:
                 pass
             _record_failure(log_path, plan, item, str(error))
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, str(error))
-            if progress is not None:
-                progress(index + 1, total)
+            _report_progress(progress, index + 1, total)
             continue
         except Exception:
             try:
@@ -326,17 +432,25 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 pass
             _record_failure(log_path, plan, item, SAFE_ERROR_MESSAGE)
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, SAFE_ERROR_MESSAGE)
-            if progress is not None:
-                progress(index + 1, total)
+            _report_progress(progress, index + 1, total)
             continue
         copied[index] = True
 
     if stopped:
-        outcomes = tuple(outcome for outcome in results if outcome is not None)
+        if root_untrusted:
+            outcomes = tuple(outcome for outcome in results if outcome is not None)
+        else:
+            _rollback_orphaned_copies(plan, results, copied)
+            outcomes = tuple(outcome for outcome in results if outcome is not None)
     else:
         for index, item in enumerate(plan.items):
             if not copied[index]:
                 continue
+            if not _live_roots_ok(plan):
+                root_untrusted = True
+                _fail_remaining_locked(index)
+                _report_progress(progress, index + 1, total)
+                break
             try:
                 _revalidate_source(item.source, item.identity)
             except QuarantineError as error:
@@ -348,8 +462,7 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                 results[index] = MoveOutcome(
                     item.source, item.destination, MoveStatus.FAILED, str(error)
                 )
-                if progress is not None:
-                    progress(index + 1, total)
+                _report_progress(progress, index + 1, total)
                 continue
             except Exception:
                 try:
@@ -363,14 +476,32 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                     MoveStatus.FAILED,
                     SAFE_ERROR_MESSAGE,
                 )
-                if progress is not None:
-                    progress(index + 1, total)
+                _report_progress(progress, index + 1, total)
                 continue
 
             _sync_destination_ancestors(
                 plan.quarantine_root,
                 item.destination.parent,
             )
+            try:
+                _revalidate_source(item.source, item.identity)
+            except (QuarantineError, Exception):
+                try:
+                    _remove_partial_destination(item.destination)
+                except OSError:
+                    pass
+                _record_failure(
+                    log_path, plan, item,
+                    "The source file changed after it was scanned.",
+                )
+                results[index] = MoveOutcome(
+                    item.source,
+                    item.destination,
+                    MoveStatus.FAILED,
+                    "The source file changed after it was scanned.",
+                )
+                _report_progress(progress, index + 1, total)
+                continue
             try:
                 _remove_source(item.source)
             except Exception:
@@ -381,19 +512,18 @@ def execute_quarantine_plan(plan, *, progress: Callable[[int, int], None] | None
                     MoveStatus.FAILED,
                     REMOVE_ERROR_MESSAGE,
                 )
-                if progress is not None:
-                    progress(index + 1, total)
+                _report_progress(progress, index + 1, total)
                 continue
             try:
                 _write_move_log_records(log_path, [_move_log_record(plan, item, "moved", "")])
             except OSError:
                 results[index] = MoveOutcome(item.source, item.destination, MoveStatus.FAILED, RECORD_ERROR_MESSAGE)
-                if progress is not None:
-                    progress(index + 1, total)
+                _report_progress(progress, index + 1, total)
+                if not root_untrusted:
+                    _rollback_orphaned_copies(plan, results, copied)
                 break
             results[index] = MoveOutcome(item.source, item.destination, MoveStatus.MOVED, "")
-            if progress is not None:
-                progress(index + 1, total)
+            _report_progress(progress, index + 1, total)
         outcomes = tuple(outcome for outcome in results if outcome is not None)
 
     summary = QuarantineSummary(plan.batch_id, plan.quarantine_root, outcomes, QuarantineState.COMPLETED)
@@ -457,7 +587,7 @@ def _copy_verified(source: Path, destination: Path, expected: SourceIdentity) ->
         if byte_count != expected.byte_count or digest.hexdigest() != expected.sha256:
             raise QuarantineError("The copied file did not match the source.")
     except FileExistsError:
-        raise QuarantineError("The destination already exists.") from None
+        raise QuarantineError(DESTINATION_EXISTS_MESSAGE) from None
     except OSError:
         raise QuarantineError("The file could not be copied safely.") from None
 

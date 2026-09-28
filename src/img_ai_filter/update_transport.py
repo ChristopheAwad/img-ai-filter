@@ -7,6 +7,7 @@ import hashlib
 import http.client
 import os
 from pathlib import Path
+import shutil
 import ssl
 import tempfile
 from typing import Callable
@@ -147,10 +148,22 @@ def _validated_url(url: str, *, initial: bool) -> tuple[str, str]:
         raise UpdateTransportError("The download URL is not permitted")
     if initial and (host != "github.com" or not parsed.path.startswith(_RELEASE_PATH_PREFIX)):
         raise UpdateTransportError("The download URL is not permitted")
+    if host == "github.com" and not parsed.path.startswith(_RELEASE_PATH_PREFIX):
+        raise UpdateTransportError("The download URL is not permitted")
     path = parsed.path or "/"
     if parsed.query:
         path += "?" + parsed.query
     return host, path
+
+
+def _require_free_space(directory: Path, needed: int) -> None:
+    """Fail before downloading when the destination filesystem is too full."""
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError:
+        raise UpdateTransportError("The available storage could not be checked") from None
+    if type(needed) is not int or free < needed:
+        raise UpdateTransportError("There is not enough free space for the update")
 
 
 def download_appimage(
@@ -177,6 +190,7 @@ def download_appimage(
         raise UpdateTransportError("The download details are invalid")
     current_url = asset.url
     _validated_url(current_url, initial=True)
+    _require_free_space(directory, asset.size)
     connections: list[object] = []
     temporary_path: Path | None = None
 

@@ -73,6 +73,7 @@ from img_ai_filter.scan_workflow import (
     ScanCandidate,
     ScanState,
     ScanSummary,
+    initial_check_state,
     run_server_scan,
 )
 from img_ai_filter.scanner import ScanError, ScanResult, scan_images
@@ -935,8 +936,19 @@ class MainWindow(QMainWindow):
             if text == "Clear All"
             else Qt.CheckState.Checked
         )
-        for index in range(count):
-            self.results_list.item(index).setCheckState(target)
+        self.results_list.blockSignals(True)
+        try:
+            for index in range(count):
+                self.results_list.item(index).setCheckState(target)
+                row = self.results_list.itemWidget(self.results_list.item(index))
+                if row is not None:
+                    checkbox = row.findChild(QCheckBox, "candidateCheckBox")
+                    if checkbox is not None:
+                        checkbox.blockSignals(True)
+                        checkbox.setChecked(target == Qt.CheckState.Checked)
+                        checkbox.blockSignals(False)
+        finally:
+            self.results_list.blockSignals(False)
         self._update_controls()
 
     def _any_checked(self) -> bool:
@@ -978,9 +990,16 @@ class MainWindow(QMainWindow):
         self.connection_label.setText("Connecting to KoboldCpp...")
         self.model_label.setText("Model: not discovered")
 
-        def operation(progress: Callable[[int, int], None]) -> Any:
+        try:
             transport = self._transport_factory()
-            self._active_transport = transport
+        except Exception:
+            self._config = None
+            self.connection_label.setText("The connection test could not start.")
+            self._update_controls()
+            return
+        self._active_transport = transport
+
+        def operation(progress: Callable[[int, int], None]) -> Any:
             return self._discover(config, transport)
 
         self._start_operation("connection", operation)
@@ -1034,12 +1053,13 @@ class MainWindow(QMainWindow):
             )
 
     def _operation_succeeded(self, generation: int, result: Any) -> None:
-        if self._is_current(generation):
-            self._operation_result = result
+        # Store signal-carried values (thread-safe) for finished/close paths.
+        # Single-operation guard ensures no stale overwrite: a new operation
+        # can only start after the previous thread cleared.
+        self._operation_result = result
 
     def _operation_failed(self, generation: int, error: Exception) -> None:
-        if self._is_current(generation):
-            self._operation_error = error
+        self._operation_error = error
 
     def _operation_finished(self, generation: int) -> None:
         # The start guards permit only one application operation at a time.
@@ -1059,7 +1079,7 @@ class MainWindow(QMainWindow):
         self._operation_error = None
         if not current:
             if self._closing and kind == "quarantine":
-                self._record_quarantine(thread.result, thread.error)
+                self._record_quarantine(result, error)
             if self._closing:
                 QTimer.singleShot(0, self.close)
             return
@@ -1165,9 +1185,15 @@ class MainWindow(QMainWindow):
         self._cancel_event = cancel_event
         self.results_list.clear()
         self.results_empty_label.hide()
-        def operation(progress: Callable[[int, int], None]) -> ScanSummary:
+        try:
             transport = self._transport_factory()
-            self._active_transport = transport
+        except Exception:
+            self._cancel_event = None
+            self.status_label.setText("The scan could not start.")
+            self._update_controls()
+            return
+        self._active_transport = transport
+        def operation(progress: Callable[[int, int], None]) -> ScanSummary:
             return self._run_scan(
                 folder,
                 config,
@@ -1222,6 +1248,7 @@ class MainWindow(QMainWindow):
             ))
             return
 
+        self.results_list.blockSignals(True)
         for candidate in summary.candidates:
             confidence = round(candidate.confidence * 100)
             category = candidate.category.replace("_", " ")
@@ -1239,10 +1266,9 @@ class MainWindow(QMainWindow):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-            threshold = self._auto_select_confidence_percent / 100
             item.setCheckState(
                 Qt.CheckState.Checked
-                if candidate.confidence >= threshold
+                if initial_check_state(candidate.confidence, self._auto_select_confidence_percent)
                 else Qt.CheckState.Unchecked
             )
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
@@ -1286,6 +1312,7 @@ class MainWindow(QMainWindow):
             row.adjustSize()
             item.setSizeHint(QSize(0, max(110, row.sizeHint().height())))
             self.results_list.setItemWidget(item, row)
+        self.results_list.blockSignals(False)
         self._refresh_heading_fonts()
         self._refresh_candidate_rows()
         self.results_empty_label.setVisible(
@@ -1497,6 +1524,12 @@ class MainWindow(QMainWindow):
                 message = str(error)
             else:
                 message = "The update operation could not be completed."
+            if kind == "install":
+                # A failed install leaves a stale verified download behind;
+                # remove it so AppImage directories do not accumulate.
+                self._remove_verified_download(self._verified_update)
+                self._verified_update = None
+                self._update_installation = None
             self.status_label.setText(message)
             _update_message(self, QMessageBox.Icon.Warning, message)
             self._update_controls()
@@ -1665,6 +1698,10 @@ class MainWindow(QMainWindow):
         detail = ", ".join(f"{amount} {label}" for label, amount in labels if amount)
         detail_text = f" (failed: {detail})" if detail else ""
         filtered_text = f"{summary.filtered} filtered, " if summary.filtered else ""
+        files_text = (
+            f", {count(summary.skipped_files, 'unreadable file')}"
+            if summary.skipped_files else ""
+        )
         return (
             f"{prefixes[summary.state]}: "
             f"{count(summary.discovered, 'discovered', 'discovered')}, "
@@ -1675,6 +1712,7 @@ class MainWindow(QMainWindow):
             f"{count(summary.uncertain, 'uncertain', 'uncertain')}, "
             f"{count(summary.failed, 'failed', 'failed')}, "
             f"{count(summary.skipped_directories, 'unreadable folder')}"
+            f"{files_text}"
             f"{detail_text}."
         )
 
@@ -1845,6 +1883,12 @@ class MainWindow(QMainWindow):
             ):
                 self.results_list.takeItem(index)
 
+        if self.results_list.count() == 0:
+            self.results_empty_label.setText(
+                "No likely screenshots, memes, or paper documents were found."
+            )
+            self.results_empty_label.show()
+
         total = len(summary.outcomes)
         moved_count = summary.moved_count
         if summary.state is QuarantineState.COMPLETED:
@@ -1953,7 +1997,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             if self._operation_kind == "quarantine":
-                self._record_quarantine(thread.result, thread.error)
+                self._record_quarantine(self._operation_result, self._operation_error)
             self._thread = None
         update_thread = self._update_thread
         if update_thread is not None:
