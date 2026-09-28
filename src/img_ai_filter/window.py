@@ -45,6 +45,7 @@ from img_ai_filter.endpoint import (
     VisionEndpointConfig,
     build_vision_endpoint_config,
 )
+from img_ai_filter.image_payload import LARGE_PREVIEW_MAX_EDGE
 from img_ai_filter.http_transport import StandardHttpTransport
 from img_ai_filter.quarantine import (
     MOVE_LOG_NAME,
@@ -310,10 +311,10 @@ class LargePreviewDialog(QDialog):
             self.image_label.setText("Large preview is not available.")
             self.image_label.setWordWrap(True)
         else:
-            if max(pixmap.width(), pixmap.height()) > 512:
+            if max(pixmap.width(), pixmap.height()) > LARGE_PREVIEW_MAX_EDGE:
                 pixmap = pixmap.scaled(
-                    512,
-                    512,
+                    LARGE_PREVIEW_MAX_EDGE,
+                    LARGE_PREVIEW_MAX_EDGE,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
@@ -322,6 +323,7 @@ class LargePreviewDialog(QDialog):
         self.path_label = QLabel(str(candidate.path))
         self.path_label.setObjectName("largePreviewPath")
         self.path_label.setWordWrap(True)
+        self.path_label.setTextFormat(Qt.TextFormat.PlainText)
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         confidence = round(candidate.confidence * 100)
@@ -332,6 +334,7 @@ class LargePreviewDialog(QDialog):
         self.reason_label = QLabel(candidate.reason)
         self.reason_label.setObjectName("largePreviewReason")
         self.reason_label.setWordWrap(True)
+        self.reason_label.setTextFormat(Qt.TextFormat.PlainText)
         self.reason_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         scroll = QScrollArea()
@@ -809,7 +812,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self._cancel_operation)
         self.results_list.itemChanged.connect(self._candidate_item_changed)
         self.results_list.itemSelectionChanged.connect(self._update_candidate_selection_colors)
-        self.results_list.itemDoubleClicked.connect(self._open_large_view_by_item)
+        # itemActivated covers double-click and Enter; connecting itemDoubleClicked
+        # as well would open two dialogs for one double-click.
         self.results_list.itemActivated.connect(self._open_large_view_by_item)
         self._update_controls()
 
@@ -947,7 +951,7 @@ class MainWindow(QMainWindow):
             return
         try:
             candidate = item.data(Qt.ItemDataRole.UserRole)
-        except Exception:
+        except (RuntimeError, TypeError, AttributeError):
             return
         if not isinstance(candidate, ScanCandidate):
             return
@@ -955,9 +959,6 @@ class MainWindow(QMainWindow):
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.setModal(False)
         dialog.show()
-
-    def _open_large_view(self, item: Any) -> None:
-        self._open_large_view_by_item(item)
 
     def _test_connection(self) -> None:
         if self._thread is not None or self._update_thread is not None:

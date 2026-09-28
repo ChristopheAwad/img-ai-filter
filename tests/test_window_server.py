@@ -2772,7 +2772,7 @@ def test_double_click_opens_large_view_with_details(
     window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
 
     item = window.results_list.item(0)
-    window._open_large_view(item)
+    window._open_large_view_by_item(item)
     dialogs = window.findChildren(QDialog)
     assert dialogs
     dialog = dialogs[-1]
@@ -2807,7 +2807,7 @@ def test_large_view_corrupt_bytes_shows_placeholder(
     )
     window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
 
-    window._open_large_view(window.results_list.item(0))
+    window._open_large_view_by_item(window.results_list.item(0))
     dialog = window.findChildren(QDialog)[-1]
     assert dialog.findChild(QLabel, "largePreviewImage").text() == (
         "Large preview is not available."
@@ -2835,7 +2835,7 @@ def test_large_view_empty_bytes_shows_placeholder(
     )
     window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
 
-    window._open_large_view(window.results_list.item(0))
+    window._open_large_view_by_item(window.results_list.item(0))
     dialog = window.findChildren(QDialog)[-1]
     assert dialog.findChild(QLabel, "largePreviewImage").text() == (
         "Large preview is not available."
@@ -2856,7 +2856,7 @@ def test_large_view_does_not_read_source_file(
     monkeypatch.setattr(Path, "open", forbidden_open)
     monkeypatch.setattr(Path, "read_bytes", forbidden_open)
 
-    window._open_large_view(window.results_list.item(0))
+    window._open_large_view_by_item(window.results_list.item(0))
     dialog = window.findChildren(QDialog)[-1]
     assert not dialog.findChild(QLabel, "largePreviewImage").pixmap().isNull()
     dialog.close()
@@ -2870,7 +2870,7 @@ def test_large_view_is_resizable_and_closes(
         qtbot, monkeypatch, tmp_path, (_large_candidate(source_file),)
     )
 
-    window._open_large_view(window.results_list.item(0))
+    window._open_large_view_by_item(window.results_list.item(0))
     dialog = window.findChildren(QDialog)[-1]
     assert not dialog.isModal()
     dialog.resize(700, 700)
@@ -2887,7 +2887,7 @@ def test_rescan_clears_list_without_crashing_open_viewer(
         qtbot, monkeypatch, tmp_path, (_large_candidate(source_file),)
     )
 
-    window._open_large_view(window.results_list.item(0))
+    window._open_large_view_by_item(window.results_list.item(0))
     dialog = window.findChildren(QDialog)[-1]
     window._finish_scan(_summary(discovered=1, analyzed=1, ordinary=1), None)
 
@@ -2899,7 +2899,6 @@ def test_double_click_empty_list_does_nothing(qtbot) -> None:
     window = MainWindow(settings_store=MemoryStore(), initial_config=READY_CONFIG)
     qtbot.addWidget(window)
 
-    window._open_large_view(None)
     window._open_large_view_by_item(None)
     assert window.findChildren(QDialog) == []
 
@@ -2927,8 +2926,28 @@ def test_viewer_writes_no_history_or_settings(
     before = dict(store.values)
     before_history = load_activity_history(store)
 
-    window._open_large_view(window.results_list.item(0))
+    window._open_large_view_by_item(window.results_list.item(0))
     window.findChildren(QDialog)[-1].close()
 
     assert dict(store.values) == before
     assert load_activity_history(store) == before_history
+
+
+def test_one_activation_opens_exactly_one_dialog(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_large_candidate(source_file),)
+    )
+
+    item = window.results_list.item(0)
+    # A real double-click emits both doubleClicked and activated in Qt. Only
+    # activated is wired to the viewer, so one gesture opens one dialog.
+    window.results_list.itemDoubleClicked.emit(item)
+    assert window.findChildren(QDialog) == []
+
+    window.results_list.itemActivated.emit(item)
+    qtbot.waitUntil(lambda: len(window.findChildren(QDialog)) == 1)
+    assert len(window.findChildren(QDialog)) == 1
+    window.findChildren(QDialog)[-1].close()
