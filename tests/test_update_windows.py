@@ -289,6 +289,82 @@ def test_restart_script_swaps_and_restarts(tmp_path: Path) -> None:
     assert "1234" in text
 
 
+def test_stage_rehashes_and_rejects_swapped_file(tmp_path: Path) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "image-filter.exe").write_bytes(b"old")
+    zip_path = tmp_path / "update.zip"
+    _payload_zip(zip_path, "ImageFilter-0.2.0-windows-x86_64")
+    swapped = VerifiedDownload(zip_path, zip_path.stat().st_size, "0" * 64)
+    with pytest.raises(InstallError):
+        stage_portable_zip(swapped, app_dir)
+    assert not (app_dir.with_name(app_dir.name + ".update-staging")).exists()
+
+
+def test_stage_rejects_root_matching_live_folder(tmp_path: Path) -> None:
+    app_dir = tmp_path / "ImageFilter-0.2.0-windows-x86_64"
+    app_dir.mkdir()
+    (app_dir / "image-filter.exe").write_bytes(b"old")
+    zip_path = tmp_path / "update.zip"
+    _payload_zip(zip_path, app_dir.name)
+    verified = VerifiedDownload(
+        zip_path, zip_path.stat().st_size, hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    )
+    with pytest.raises(InstallError):
+        stage_portable_zip(verified, app_dir)
+
+
+def test_restart_script_quotes_special_folder_names(tmp_path: Path) -> None:
+    app_dir = tmp_path / "my & 100% app"
+    staging = tmp_path / "staging"
+    script = tmp_path / "update.bat"
+    result = build_portable_restart_script(
+        app_dir=app_dir, staging_dir=staging, script_path=script, pid=42
+    )
+    text = result.read_text(encoding="ascii")
+    assert 'set "APP_DIR=' in text
+    assert "100%% app" in text
+    assert "&" in text
+
+
+def test_restart_script_rejects_quote_in_path(tmp_path: Path) -> None:
+    with pytest.raises(InstallError):
+        build_portable_restart_script(
+            app_dir=Path('/tmp/a"b'),
+            staging_dir=tmp_path / "staging",
+            script_path=tmp_path / "update.bat",
+            pid=42,
+        )
+
+
+def test_installer_launch_rejects_symlink(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("symlink check needs posix in this suite")
+    real = tmp_path / "real.exe"
+    real.write_bytes(b"setup")
+    link = tmp_path / "setup.exe"
+    link.symlink_to(real)
+    calls: list = []
+    assert (
+        launch_windows_installer(link, launcher=calls.append) is False
+    )
+    assert calls == []
+
+
+def test_download_rejects_plain_exe_suffix(tmp_path: Path) -> None:
+    data = b"tool"
+    asset = UpdateAsset(
+        name="helper-0.2.0.exe",
+        size=len(data),
+        url="https://github.com/ChristopheAwad/img-ai-filter/releases/download/v0.2.0/helper-0.2.0.exe",
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
+    with pytest.raises(UpdateTransportError):
+        download_windows_asset(
+            asset, directory=tmp_path, connection_factory=_factory(_FakeResponse(data))
+        )
+
+
 def test_installer_launch_uses_silent_flag(tmp_path: Path) -> None:
     setup = tmp_path / "setup.exe"
     setup.write_bytes(b"setup")

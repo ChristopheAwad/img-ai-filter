@@ -25,7 +25,6 @@ from .update_transport import UpdateCancelled, UpdateTransportError, VerifiedDow
 
 
 RELEASES_TAG_PAGE = "https://github.com/ChristopheAwad/img-ai-filter/releases/tag/v{version}"
-_METADATA_HOSTS_NOTE = "github.com"
 _DOWNLOAD_HOSTS = {"github.com", "release-assets.githubusercontent.com"}
 _RELEASE_PATH_PREFIX = "/ChristopheAwad/img-ai-filter/releases/download/"
 _USER_AGENT = "ImageFilter update checker"
@@ -199,7 +198,7 @@ def download_windows_asset(
         or max_redirects < 0
     ):
         raise UpdateTransportError("The download details are invalid")
-    if not asset.name.endswith((".zip", ".exe")):
+    if not (asset.name.endswith(".zip") or asset.name.endswith("-setup.exe")):
         raise UpdateTransportError("The download details are invalid")
     current_url = asset.url
     _validated_url(current_url, initial=True)
@@ -304,6 +303,18 @@ def stage_portable_zip(verified: VerifiedDownload, app_dir: Path) -> Path:
         raise InstallError("The update file is unavailable") from None
     if stat.S_ISLNK(zip_stat.st_mode) or not stat.S_ISREG(zip_stat.st_mode):
         raise InstallError("The update file is not a safe regular file")
+    # Re-hash so a post-verification swap of the temp file cannot slip through.
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with zip_path.open("rb") as staged_file:
+            for chunk in iter(lambda: staged_file.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+    except OSError:
+        raise InstallError("The update file could not be verified") from None
+    if size != verified.size or digest.hexdigest() != verified.sha256:
+        raise InstallError("The update failed verification")
     if not app_dir.is_dir() or app_dir.is_symlink():
         raise InstallError("The current installation folder is unsafe")
     staging = app_dir.with_name(app_dir.name + ".update-staging")
@@ -328,6 +339,8 @@ def stage_portable_zip(verified: VerifiedDownload, app_dir: Path) -> Path:
             if len(roots) != 1:
                 raise InstallError("The update file is not a safe regular file")
             root = next(iter(roots))
+            if root == app_dir.name:
+                raise InstallError("The update file is not a safe regular file")
             archive.extractall(staging.parent)
             extracted_root = staging.parent / root
             if extracted_root != staging:
@@ -361,6 +374,16 @@ def _require_free_space_for_install(directory: Path, needed: int) -> None:
         raise InstallError("There is not enough free space for the update")
 
 
+def _batch_assign(name: str, value: Path | str) -> str:
+    """Render a quoted batch assignment safe for folder names with spaces."""
+    text = str(value)
+    if '"' in text or "\n" in text or "\r" in text:
+        raise InstallError("The update could not be staged")
+    # Inside a batch file a literal % must be doubled; the quoted form keeps
+    # spaces and & | < > ^ safe. Double quotes cannot appear in Windows paths.
+    return f'set "{name}={text.replace("%", "%%")}"'
+
+
 def build_portable_restart_script(
     *,
     app_dir: Path,
@@ -378,10 +401,10 @@ def build_portable_restart_script(
         "@echo off",
         "rem Image Filter portable update helper: waits for the app to exit,",
         "rem then swaps the staged folder into place and restarts.",
-        f"set APP_DIR={app_dir}",
-        f"set STAGING_DIR={staging_dir}",
-        f"set BACKUP_DIR={backup}",
         f"set APP_PID={pid}",
+        _batch_assign("APP_DIR", app_dir),
+        _batch_assign("STAGING_DIR", staging_dir),
+        _batch_assign("BACKUP_DIR", backup),
         ":waitloop",
         'for /f %%p in (\'tasklist /FI "PID eq %APP_PID%" /NH\') do if "%%p"=="%APP_PID%" goto stillrunning',
         "goto doswap",
@@ -408,6 +431,12 @@ def launch_windows_installer(
     launcher: Callable[..., object] = subprocess.Popen,
 ) -> bool:
     """Launch the verified Inno Setup installer in silent mode."""
+    try:
+        setup_stat = setup_exe.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(setup_stat.st_mode) or not stat.S_ISREG(setup_stat.st_mode):
+        return False
     try:
         launcher([str(setup_exe), "/SILENT"])
     except Exception:

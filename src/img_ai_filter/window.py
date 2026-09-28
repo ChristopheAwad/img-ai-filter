@@ -167,7 +167,7 @@ def _run_restart_batch(script: Path) -> bool:
     import subprocess
 
     try:
-        subprocess.Popen([str(script)], shell=True)
+        subprocess.Popen(f'"{script}"', shell=True)
     except Exception:
         return False
     return True
