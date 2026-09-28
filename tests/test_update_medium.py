@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,11 @@ from img_ai_filter.update_release import UpdateMetadataError, select_update
 from img_ai_filter.update_transport import (
     UpdateTransportError,
     download_appimage,
+)
+
+LINUX_ONLY = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="AppImage installation is supported only on Linux",
 )
 
 
@@ -156,6 +162,7 @@ def test_m7_download_needs_free_space_before_network(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+@LINUX_ONLY
 def test_m7_install_needs_free_space_and_keeps_files(tmp_path, monkeypatch):
     import img_ai_filter.update_install as install_module
     from img_ai_filter.update_install import (
@@ -193,6 +200,7 @@ def test_m7_install_needs_free_space_and_keeps_files(tmp_path, monkeypatch):
     assert new_file.read_bytes() == b"new-appimage"
 
 
+@LINUX_ONLY
 def test_m7_install_rehashes_after_chmod_and_syncs_backup(tmp_path):
     import img_ai_filter.update_install as install_module
     from img_ai_filter.update_install import (
@@ -231,8 +239,6 @@ def test_m7_install_rehashes_after_chmod_and_syncs_backup(tmp_path):
             return None
         return real_chmod(self, *args, **kwargs)
 
-    import sys
-    assert sys.platform == "linux"
     from pathlib import Path as P
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(P, "chmod", swapping_chmod)
