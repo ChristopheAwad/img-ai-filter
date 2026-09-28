@@ -96,6 +96,9 @@ def _candidate(path: Path, category: str = "screenshot") -> ScanCandidate:
         ONE_PIXEL_PNG,
         1,
         1,
+        ONE_PIXEL_PNG,
+        1,
+        1,
     )
 
 
@@ -2729,3 +2732,222 @@ def test_move_worker_error_preserves_rows_and_selection(
     assert window.selection_button.text() == "Clear All"
     assert window.selection_button.isEnabled()
     assert "private move failure" not in window.status_label.text()
+
+
+def _large_png_bytes(width: int = 512, height: int = 256) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.new("RGB", (width, height), (20, 40, 60))
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _large_candidate(path: Path, confidence: float = 0.92) -> ScanCandidate:
+    data = _large_png_bytes()
+    return ScanCandidate(
+        path,
+        "screenshot",
+        "Visual reason for screenshot.",
+        confidence,
+        SourceIdentity(1, "c" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+        data,
+        512,
+        256,
+    )
+
+
+def test_double_click_opens_large_view_with_details(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = _large_candidate(source_file)
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+
+    item = window.results_list.item(0)
+    window._open_large_view_by_item(item)
+    dialogs = window.findChildren(QDialog)
+    assert dialogs
+    dialog = dialogs[-1]
+    assert dialog.windowTitle().startswith("Large view")
+    assert source_file.name in dialog.windowTitle()
+    assert str(source_file) in dialog.findChild(QLabel, "largePreviewPath").text()
+    assert "92%" in dialog.findChild(QLabel, "largePreviewMeta").text()
+    assert "screenshot" in dialog.findChild(QLabel, "largePreviewMeta").text()
+    assert "Visual reason" in dialog.findChild(QLabel, "largePreviewReason").text()
+    assert not dialog.findChild(QLabel, "largePreviewImage").pixmap().isNull()
+    assert dialog.minimumSize().width() <= 420
+    assert dialog.minimumSize().height() <= 520
+    dialog.close()
+
+
+def test_large_view_corrupt_bytes_shows_placeholder(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "bad.png"
+    candidate = ScanCandidate(
+        source_file,
+        "screenshot",
+        "Visual reason.",
+        0.9,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+        b"not-a-png",
+        0,
+        0,
+    )
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+
+    window._open_large_view_by_item(window.results_list.item(0))
+    dialog = window.findChildren(QDialog)[-1]
+    assert dialog.findChild(QLabel, "largePreviewImage").text() == (
+        "Large preview is not available."
+    )
+    assert str(source_file) in dialog.findChild(QLabel, "largePreviewPath").text()
+    dialog.close()
+
+
+def test_large_view_empty_bytes_shows_placeholder(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "empty.png"
+    candidate = ScanCandidate(
+        source_file,
+        "screenshot",
+        "Visual reason.",
+        0.9,
+        SourceIdentity(0, "a" * 64),
+        ONE_PIXEL_PNG,
+        1,
+        1,
+        b"",
+        0,
+        0,
+    )
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+
+    window._open_large_view_by_item(window.results_list.item(0))
+    dialog = window.findChildren(QDialog)[-1]
+    assert dialog.findChild(QLabel, "largePreviewImage").text() == (
+        "Large preview is not available."
+    )
+    dialog.close()
+
+
+def test_large_view_does_not_read_source_file(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = _large_candidate(source_file)
+    window, _ = _bulk_window(qtbot, monkeypatch, tmp_path, (candidate,))
+
+    def forbidden_open(*args, **kwargs):
+        raise AssertionError("viewer must not read source file")
+
+    monkeypatch.setattr(Path, "open", forbidden_open)
+    monkeypatch.setattr(Path, "read_bytes", forbidden_open)
+
+    window._open_large_view_by_item(window.results_list.item(0))
+    dialog = window.findChildren(QDialog)[-1]
+    assert not dialog.findChild(QLabel, "largePreviewImage").pixmap().isNull()
+    dialog.close()
+
+
+def test_large_view_is_resizable_and_closes(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_large_candidate(source_file),)
+    )
+
+    window._open_large_view_by_item(window.results_list.item(0))
+    dialog = window.findChildren(QDialog)[-1]
+    assert not dialog.isModal()
+    dialog.resize(700, 700)
+    assert dialog.size().width() == 700
+    dialog.close()
+    assert not dialog.isVisible()
+
+
+def test_rescan_clears_list_without_crashing_open_viewer(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_large_candidate(source_file),)
+    )
+
+    window._open_large_view_by_item(window.results_list.item(0))
+    dialog = window.findChildren(QDialog)[-1]
+    window._finish_scan(_summary(discovered=1, analyzed=1, ordinary=1), None)
+
+    assert window.results_list.count() == 0
+    dialog.close()
+
+
+def test_double_click_empty_list_does_nothing(qtbot) -> None:
+    window = MainWindow(settings_store=MemoryStore(), initial_config=READY_CONFIG)
+    qtbot.addWidget(window)
+
+    window._open_large_view_by_item(None)
+    assert window.findChildren(QDialog) == []
+
+
+def test_viewer_writes_no_history_or_settings(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    from img_ai_filter.activity_history import load_activity_history
+
+    store = MemoryStore()
+    source_file = tmp_path / "source" / "shot.png"
+    candidate = _large_candidate(source_file)
+    summary = _summary(candidates=(candidate,), discovered=1, analyzed=1)
+    window = MainWindow(
+        initial_config=READY_CONFIG,
+        transport_factory=FakeTransport,
+        run_scan=lambda *args, **kwargs: summary,
+        confirm_transfer=lambda *_: True,
+        settings_store=store,
+    )
+    qtbot.addWidget(window)
+    _select(window, monkeypatch, tmp_path / "source")
+    window.scan_button.click()
+    qtbot.waitUntil(lambda: window.results_list.count() == 1)
+    before = dict(store.values)
+    before_history = load_activity_history(store)
+
+    window._open_large_view_by_item(window.results_list.item(0))
+    window.findChildren(QDialog)[-1].close()
+
+    assert dict(store.values) == before
+    assert load_activity_history(store) == before_history
+
+
+def test_one_activation_opens_exactly_one_dialog(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    source_file = tmp_path / "source" / "shot.png"
+    window, _ = _bulk_window(
+        qtbot, monkeypatch, tmp_path, (_large_candidate(source_file),)
+    )
+
+    item = window.results_list.item(0)
+    # A real double-click emits both doubleClicked and activated in Qt. Only
+    # activated is wired to the viewer, so one gesture opens one dialog.
+    window.results_list.itemDoubleClicked.emit(item)
+    assert window.findChildren(QDialog) == []
+
+    window.results_list.itemActivated.emit(item)
+    qtbot.waitUntil(lambda: len(window.findChildren(QDialog)) == 1)
+    assert len(window.findChildren(QDialog)) == 1
+    window.findChildren(QDialog)[-1].close()
