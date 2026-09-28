@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -102,6 +103,8 @@ def test_m6_upload_uses_read_timeout_after_explicit_connect(monkeypatch):
 
 
 def test_m6_swapped_symlink_between_check_and_read_is_rejected(tmp_path: Path, monkeypatch):
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("Symlink-race rejection needs O_NOFOLLOW")
     from PIL import Image
 
     real = tmp_path / "real.png"
